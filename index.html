@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Sign Language Interpreter</title>
+  <meta name="description" content="Privacy-first web app that uses your camera and machine learning to interpret sign language in real time." />
+  <link rel="stylesheet" href="style.css" />
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+  <!-- KNN Classifier -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.4/dist/knn-classifier.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Sign Language Interpreter</h1>
+      <p class="subtitle">Camera + MediaPipe + TensorFlow.js · Runs 100% in your browser</p>
+    </header>
+
+    <main>
+      <div class="video-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="output"></canvas>
+        <div id="status" class="status">Camera off</div>
+      </div>
+
+      <div class="prediction-panel">
+        <div class="prediction-label">Prediction</div>
+        <div id="prediction" class="prediction">—</div>
+        <div id="confidence" class="confidence"></div>
+      </div>
+
+      <div class="controls">
+        <button id="btn-start" class="btn primary">Start Camera</button>
+        <button id="btn-stop" class="btn" disabled>Stop</button>
+        <button id="btn-switch" class="btn" disabled>Switch Camera</button>
+        <button id="btn-speak" class="btn" disabled>Speak</button>
+      </div>
+
+      <div class="train-panel">
+        <h2>Train Custom Signs</h2>
+        <p class="hint">Hold a pose, type a label, then add several samples. The model learns on-device.</p>
+        <div class="train-row">
+          <input id="label-input" type="text" placeholder="Label (e.g. HELLO, A, THUMBS_UP)" maxlength="32" />
+          <button id="btn-add" class="btn primary" disabled>Add Sample</button>
+        </div>
+        <div class="train-row">
+          <button id="btn-clear" class="btn danger" disabled>Clear All Samples</button>
+          <span id="sample-count" class="sample-count">0 samples</span>
+        </div>
+      </div>
+
+      <div class="info">
+        <p>Tips: Good lighting · Hold sign steady for 0.5–1s · Train 8–15 samples per label for best results.</p>
+      </div>
+    </main>
+
+    <footer>
+      <a href="https://github.com/ar-fullsend/sign-language-interpreter" target="_blank" rel="noopener">GitHub</a>
+      · Privacy-first · No data leaves your device
+    </footer>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
