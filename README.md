@@ -99,16 +99,17 @@ Open **http://localhost:8000/** → **Start Camera** → allow permissions.
 ## How to use
 
 1. Click **Start Camera** and allow camera access.
-2. Confirm the **blue/green skeleton** on your hand (`hand detected` in the status chip).
-3. Pick **Novice** or **Expert** capture speed.
-4. Hold a clear ASL letter until the **hold meter** fills — letter locks into **Spelling**.
-5. End a word with:
+2. You should see the **live camera preview** with a **blue/green skeleton** on your hand.
+3. Watch **Seeing now** (panel under the camera; also on the mobile bottom dock).
+4. Pick **Novice** or **Expert** capture speed.
+5. Hold a clear ASL letter until the **hold meter** fills — letter locks into **Spelling**.
+6. Or perform a **word gesture** (e.g. THANK YOU: flat hand at chin → out/down).
+7. End a fingerspelled word with:
    - open hand (**5**), or
    - drop hand from frame, or
-   - **Space** button / keyboard Space / Enter
-6. Known words light up as dictionary matches; the **Activity** sidebar records everything.
-7. **Speak sentence** reads the full line aloud.
-8. Optional: expand **Train custom signs**, type a label, add several samples while holding the pose.
+   - **Space** / keyboard Space or Enter
+8. **Speak sentence** reads the full line aloud.
+9. Optional: expand **Train custom signs**, type a label, add several samples while holding the pose.
 
 ### Good starter letters
 
@@ -163,9 +164,9 @@ Optional: TensorFlow.js KNN (custom trained labels override when present)
 
 ```
 .
-├── index.html                      # Shell: stage + activity sidebar + controls
-├── style.css                       # Layout, dark UI, responsive sidebar
-├── app.js                          # Camera, MediaPipe, recognizer, spelling, log
+├── index.html                      # Shell: camera, Seeing now, mobile dock, sidebar
+├── style.css                       # Layout (desktop + mobile / Safari)
+├── app.js                          # Camera, MediaPipe, letters, word gestures, log
 ├── models/
 │   └── hand_landmarker.task        # MediaPipe hand model (~7.5MB)
 ├── wasm/                           # MediaPipe WASM runtime (self-hosted for Pages)
@@ -173,14 +174,15 @@ Optional: TensorFlow.js KNN (custom trained labels override when present)
 │   ├── vision_wasm_internal.wasm
 │   ├── vision_wasm_nosimd_internal.js
 │   └── vision_wasm_nosimd_internal.wasm
-├── .nojekyll                       # Required so GitHub Pages serves wasm/ as static files
+├── .github/workflows/pages.yml     # Deploy site on push to main
+├── .nojekyll                       # Static assets (legacy / safety)
 ├── CHANGELOG.md
 └── README.md
 ```
 
 No bundler, no npm install required to run — open via a static file server.
 
-> **GitHub Pages note:** model + WASM are **same-origin** under `models/` and `wasm/` so tracking does not depend on Google Storage or jsDelivr for the core runtime (CDN remains as fallback).
+> **GitHub Pages note:** model + WASM are **same-origin** under `models/` and `wasm/`. The landmark canvas is **transparent** so the live camera shows underneath the skeleton.
 
 ---
 
@@ -199,23 +201,22 @@ Dictionary and phrase lists live near the top of `app.js` (`DICTIONARY`, `PHRASE
 
 ## Browser support
 
-- Chromium-based browsers (Edge, Chrome) recommended for camera + WebGL/WASM
-- Requires **secure context**: `localhost` or **HTTPS** (camera will not work on plain LAN IPs in most browsers)
-- Works on desktop and mobile; Surface / ARM devices may use the **CPU** MediaPipe path automatically
+- **Chrome / Edge / Safari** (desktop + mobile)
+- Requires **secure context**: `localhost` or **HTTPS**
+- Camera needs user permission; iOS needs `playsinline` (already set)
+- Surface / ARM may use the **CPU** MediaPipe path automatically
 
 ---
 
 ## Deploying to GitHub Pages
 
-1. Push `main` with `index.html` at the repo root (already the case).
-2. Repo **Settings → Pages → Build and deployment**
-   - Source: **Deploy from a branch**
-   - Branch: **main** / folder **/** (root)
-3. After ~1 minute, open  
-   `https://ar-fullsend.github.io/sign-language-interpreter/`
-4. Optional: repo **About → Website** → paste that URL so it shows on the repo home page.
+1. Push to `main` (repo root has `index.html`).
+2. **Settings → Pages → Build and deployment → Source: GitHub Actions**
+3. Workflow: `.github/workflows/pages.yml` deploys on every push to `main`
+4. Site: **https://ar-fullsend.github.io/sign-language-interpreter/**
+5. Optional: repo **About → Website** → that URL
 
-Every `git push` to `main` republishes the site.
+Hard-refresh after deploy if the browser cached old CSS/JS (`Ctrl+Shift+R`).
 
 ## Extending
 
