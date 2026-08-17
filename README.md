@@ -23,11 +23,25 @@ Point a camera at your hand. MediaPipe tracks 21 landmarks. An on-device scorer 
 - Short **hysteresis** (1–2 frames) so letters switch quickly without thrashing
 - GPU MediaPipe with **automatic CPU fallback** (Surface / ARM friendly)
 
+### Whole-word gestures (built-in)
+| Sign | How to produce |
+|------|----------------|
+| **THANK YOU** | Flat hand at chin → move forward & down |
+| **HELLO / HI** | Open hand wave |
+| **I LOVE YOU** | ILY handshape (thumb + index + pinky) |
+| **YES** | Fist nodding |
+| **NO** | Two-finger side shake |
+| **BYE** | Open hand wave (more flicks) |
+| **GOOD** | Thumbs up (hold) |
+| **OK** | OK circle + three up (hold) |
+
+Motion signs lock as soon as the movement completes; static shapes use a short hold.
+
 ### Spelling → words
-- Hold a steady letter to **lock** it into the spelling buffer
+- Hold a steady **letter** to lock it into the spelling buffer
 - **Open hand (5)** = space / end word (when already spelling)
-- Drop hand from frame to finalize a word
-- Dictionary match + phrase merge (`I LOVE YOU`, `THANK YOU`, …)
+- Drop hand from frame to finalize a spelled word
+- Dictionary match + phrase merge for fingerspelled text
 - Sentence bar with known vs unknown word chips
 - **Speak sentence** via Web Speech API
 

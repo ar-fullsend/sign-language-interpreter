@@ -241,6 +241,36 @@ body {
   border-radius: 999px;
 }
 
+.gesture-guide {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.9rem;
+}
+
+.gesture-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.28rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.gesture-list li strong {
+  color: var(--word, #c084fc);
+  font-weight: 700;
+  margin-right: 0.25rem;
+}
+
+.live-letter.is-word {
+  font-size: 1.55rem;
+  color: #e9d5ff;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
 /* ── Readout cards ──────────────────────────── */
 .readout {
   display: grid;

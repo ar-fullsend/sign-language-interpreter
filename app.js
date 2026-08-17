@@ -337,6 +337,316 @@ function resetRecognitionMemory() {
   stickyFrames = 0;
   challengerLabel = null;
   challengerFrames = 0;
+  poseHistory.length = 0;
+  lastMotionGestureAt = 0;
+  lastMotionGestureLabel = null;
+}
+
+// ── Whole-word ASL gestures (static + motion) ─
+// History of poses for signs like THANK YOU (chin → out/down).
+const poseHistory = [];
+const POSE_HISTORY_MS = 1100;
+const POSE_HISTORY_MAX = 48;
+let lastMotionGestureAt = 0;
+let lastMotionGestureLabel = null;
+const MOTION_COOLDOWN_MS = 1400;
+
+/** Snapshot of one frame for gesture / letter features. */
+function extractPose(lm) {
+  const wrist = lm[0];
+  const scale = dist2(wrist, lm[9]) || 1e-6;
+  const thumb = isThumbOut(lm);
+  const index = isFingerUp(lm, 8, 6, 5);
+  const middle = isFingerUp(lm, 12, 10, 9);
+  const ring = isFingerUp(lm, 16, 14, 13);
+  const pinky = isFingerUp(lm, 20, 18, 17);
+  const palm = {
+    x: (lm[5].x + lm[17].x) * 0.5,
+    y: (lm[5].y + lm[17].y) * 0.5,
+    z: ((lm[5].z || 0) + (lm[17].z || 0)) * 0.5
+  };
+  const open =
+    index && middle && ring && pinky; // flat / five-ish
+  const fist = !index && !middle && !ring && !pinky;
+  // I-L-Y handshape: thumb + index + pinky (middle & ring down)
+  const ily = thumb && index && pinky && !middle && !ring;
+  // Y is thumb+pinky only (no index)
+  const yShape = thumb && pinky && !index && !middle && !ring;
+  const thumbsUp =
+    thumb && !index && !middle && !ring && !pinky && lm[4].y < lm[3].y - 0.02;
+  return {
+    t: performance.now(),
+    wrist: { x: wrist.x, y: wrist.y, z: wrist.z || 0 },
+    palm,
+    scale,
+    thumb,
+    index,
+    middle,
+    ring,
+    pinky,
+    open,
+    fist,
+    ily,
+    yShape,
+    thumbsUp,
+    // tip cluster height (for chin-ish checks)
+    tipY: (lm[8].y + lm[12].y) * 0.5
+  };
+}
+
+function pushPose(lm) {
+  const pose = extractPose(lm);
+  poseHistory.push(pose);
+  const now = pose.t;
+  while (poseHistory.length > POSE_HISTORY_MAX) poseHistory.shift();
+  while (poseHistory.length && now - poseHistory[0].t > POSE_HISTORY_MS) {
+    poseHistory.shift();
+  }
+  return pose;
+}
+
+function historySlice(ms) {
+  const now = performance.now();
+  return poseHistory.filter((p) => now - p.t <= ms);
+}
+
+/**
+ * Detect common whole-word ASL signs.
+ * Motion signs return fireOnce:true (commit on detection).
+ * Static word shapes return fireOnce:false (hold to lock).
+ */
+function recognizeWordGesture(pose) {
+  if (!pose) return null;
+  const recent = historySlice(1000);
+  if (recent.length < 4) {
+    // Still allow strong static words
+    return recognizeStaticWord(pose);
+  }
+
+  // ── Motion: THANK YOU ───────────────────────
+  // Flat/open hand starts near face (high in frame) and moves down/out.
+  {
+    const openFrames = recent.filter((p) => p.open || (p.index && p.middle && p.ring));
+    if (openFrames.length >= 6) {
+      const early = openFrames.slice(0, Math.max(2, Math.floor(openFrames.length * 0.35)));
+      const late = openFrames.slice(-Math.max(2, Math.floor(openFrames.length * 0.35)));
+      const earlyY =
+        early.reduce((s, p) => s + p.wrist.y, 0) / early.length;
+      const lateY = late.reduce((s, p) => s + p.wrist.y, 0) / late.length;
+      const earlyZ =
+        early.reduce((s, p) => s + p.wrist.z, 0) / early.length;
+      const lateZ = late.reduce((s, p) => s + p.wrist.z, 0) / late.length;
+      const dy = lateY - earlyY; // + = moving down on screen
+      const dz = earlyZ - lateZ; // + = moving toward camera (z smaller)
+      const startedHigh = earlyY < 0.58;
+      const movedDown = dy > 0.1;
+      const movedOut = dz > 0.04 || dy > 0.14;
+      // Not a side-to-side wave
+      const xs = openFrames.map((p) => p.wrist.x);
+      const xSpan = Math.max(...xs) - Math.min(...xs);
+      if (startedHigh && movedDown && movedOut && xSpan < 0.28) {
+        return motionResult("THANK YOU", 0.9);
+      }
+      // Slightly looser thank-you
+      if (startedHigh && dy > 0.14 && xSpan < 0.22) {
+        return motionResult("THANK YOU", 0.82);
+      }
+    }
+  }
+
+  // ── Motion: HELLO / HI (wave) ───────────────
+  {
+    const openFrames = recent.filter((p) => p.open);
+    if (openFrames.length >= 8) {
+      const xs = openFrames.map((p) => p.wrist.x);
+      const ys = openFrames.map((p) => p.wrist.y);
+      const xSpan = Math.max(...xs) - Math.min(...xs);
+      const ySpan = Math.max(...ys) - Math.min(...ys);
+      const meanY = ys.reduce((a, b) => a + b, 0) / ys.length;
+      // Wave: lots of horizontal motion, hand raised
+      if (xSpan > 0.14 && ySpan < xSpan * 0.85 && meanY < 0.62) {
+        // Count direction changes in x
+        let flips = 0;
+        for (let i = 2; i < openFrames.length; i++) {
+          const d1 = openFrames[i - 1].wrist.x - openFrames[i - 2].wrist.x;
+          const d2 = openFrames[i].wrist.x - openFrames[i - 1].wrist.x;
+          if (d1 * d2 < 0 && Math.abs(d2) > 0.008) flips += 1;
+        }
+        if (flips >= 2) return motionResult("HELLO", 0.88);
+        if (xSpan > 0.2 && flips >= 1) return motionResult("HI", 0.8);
+      }
+    }
+  }
+
+  // ── Motion: YES (fist nod) ──────────────────
+  {
+    const fists = recent.filter((p) => p.fist);
+    if (fists.length >= 8) {
+      const ys = fists.map((p) => p.wrist.y);
+      const ySpan = Math.max(...ys) - Math.min(...ys);
+      let flips = 0;
+      for (let i = 2; i < fists.length; i++) {
+        const d1 = fists[i - 1].wrist.y - fists[i - 2].wrist.y;
+        const d2 = fists[i].wrist.y - fists[i - 1].wrist.y;
+        if (d1 * d2 < 0 && Math.abs(d2) > 0.01) flips += 1;
+      }
+      if (ySpan > 0.07 && flips >= 2) return motionResult("YES", 0.86);
+    }
+  }
+
+  // ── Motion: NO (side shake with 2 fingers or open pinch) ─
+  {
+    const two = recent.filter(
+      (p) => p.index && p.middle && !p.ring && !p.pinky
+    );
+    if (two.length >= 8) {
+      const xs = two.map((p) => p.wrist.x);
+      const xSpan = Math.max(...xs) - Math.min(...xs);
+      let flips = 0;
+      for (let i = 2; i < two.length; i++) {
+        const d1 = two[i - 1].wrist.x - two[i - 2].wrist.x;
+        const d2 = two[i].wrist.x - two[i - 1].wrist.x;
+        if (d1 * d2 < 0 && Math.abs(d2) > 0.01) flips += 1;
+      }
+      if (xSpan > 0.1 && flips >= 2) return motionResult("NO", 0.84);
+    }
+  }
+
+  // ── Motion: BYE (open hand wave, lower than hello ok) ─
+  {
+    const openFrames = recent.filter((p) => p.open);
+    if (openFrames.length >= 8) {
+      const xs = openFrames.map((p) => p.wrist.x);
+      const xSpan = Math.max(...xs) - Math.min(...xs);
+      let flips = 0;
+      for (let i = 2; i < openFrames.length; i++) {
+        const d1 = openFrames[i - 1].wrist.x - openFrames[i - 2].wrist.x;
+        const d2 = openFrames[i].wrist.x - openFrames[i - 1].wrist.x;
+        if (d1 * d2 < 0 && Math.abs(d2) > 0.01) flips += 1;
+      }
+      if (flips >= 3 && xSpan > 0.12) return motionResult("BYE", 0.82);
+    }
+  }
+
+  // Static words (hold to lock)
+  return recognizeStaticWord(pose);
+}
+
+function motionResult(label, confidence) {
+  const now = performance.now();
+  // Debounce same motion
+  if (
+    lastMotionGestureLabel === label &&
+    now - lastMotionGestureAt < MOTION_COOLDOWN_MS
+  ) {
+    return {
+      label,
+      confidence: confidence * 0.7,
+      kind: "word",
+      fireOnce: false,
+      source: "gesture",
+      hint: "cooldown"
+    };
+  }
+  return {
+    label,
+    confidence,
+    kind: "word",
+    fireOnce: true,
+    source: "gesture"
+  };
+}
+
+function recognizeStaticWord(pose) {
+  // I LOVE YOU — ILY handshape (very distinctive)
+  if (pose.ily) {
+    return {
+      label: "I LOVE YOU",
+      confidence: 0.93,
+      kind: "word",
+      fireOnce: false,
+      source: "gesture"
+    };
+  }
+
+  // GOOD / YES static thumbs-up (word, not letter A)
+  if (pose.thumbsUp) {
+    return {
+      label: "GOOD",
+      confidence: 0.86,
+      kind: "word",
+      fireOnce: false,
+      source: "gesture"
+    };
+  }
+
+  // OK — F-like: index tip near thumb, other three up
+  // (checked via finger flags approximation)
+  if (
+    pose.middle &&
+    pose.ring &&
+    pose.pinky &&
+    !pose.index &&
+    pose.thumb
+  ) {
+    // Could be F letter or OK word — expose as OK when used as word path
+    // Letter path still handles F; word path only if we prefer words
+    return {
+      label: "OK",
+      confidence: 0.8,
+      kind: "word",
+      fireOnce: false,
+      source: "gesture"
+    };
+  }
+
+  // PEACE — V shape as word (optional; letter V still available)
+  // Skip static PEACE to avoid fighting letter V
+
+  return null;
+}
+
+/**
+ * Choose between word gesture and letter. Words win when strong.
+ */
+function fuseLetterAndWord(letterPred, wordPred) {
+  if (wordPred && wordPred.fireOnce && wordPred.confidence >= 0.78) {
+    return { ...wordPred, source: wordPred.source || "gesture" };
+  }
+  if (wordPred && !wordPred.fireOnce && wordPred.confidence >= 0.84) {
+    // Static word shapes like ILY beat letter Y
+    if (
+      !letterPred ||
+      wordPred.confidence >= (letterPred.confidence || 0) + 0.05 ||
+      wordPred.label.length > 1
+    ) {
+      return { ...wordPred, source: wordPred.source || "gesture" };
+    }
+  }
+  // Medium word confidence: still show as pending word if much clearer than letter
+  if (
+    wordPred &&
+    wordPred.confidence >= 0.75 &&
+    letterPred &&
+    ["Y", "A", "S", "F", "V", "5", "B"].includes(letterPred.label)
+  ) {
+    // Prefer word over confusable letters
+    if (wordPred.label === "I LOVE YOU" && letterPred.label === "Y") {
+      return { ...wordPred, source: "gesture" };
+    }
+    if (wordPred.label === "GOOD" && letterPred.label === "A") {
+      return { ...wordPred, source: "gesture" };
+    }
+    if (wordPred.label === "OK" && letterPred.label === "F") {
+      return { ...wordPred, source: "gesture" };
+    }
+  }
+  if (wordPred && wordPred.confidence >= 0.88) {
+    return { ...wordPred, source: wordPred.source || "gesture" };
+  }
+  if (letterPred) return { ...letterPred, source: letterPred.source || "builtin" };
+  if (wordPred) return { ...wordPred, source: wordPred.source || "gesture" };
+  return null;
 }
 
 /**
@@ -731,26 +1041,55 @@ function commitLetter(letter, confidence) {
   flashStatus(`+${ch}`);
 }
 
-function commitWholeWordGesture(label, confidence) {
+function commitWholeWordGesture(label, confidence, meta = {}) {
   const text = label.toUpperCase().replace(/[^A-Z ]/g, "").trim();
   if (!text || text.length < 2) return;
+
+  const now = performance.now();
+  // Prevent double-commit of same word gesture
+  if (lastCommittedLabel === text && now - lastCommitAt < Math.max(COOLDOWN_MS, 900)) {
+    return;
+  }
+
   if (spelling.length > 0) finalizeWord("before gesture");
 
-  const known = isDictionaryWord(text) || PHRASES.includes(text);
-  words.push({ text, known });
+  const known =
+    isDictionaryWord(text) ||
+    PHRASES.includes(text) ||
+    text.split(" ").every((w) => isDictionaryWord(w));
+  words.push({ text, known: true }); // built-in gestures always "known"
   wordCount += 1;
-  if (known) dictHitCount += 1;
+  dictHitCount += 1;
+  lastCommittedLabel = text;
+  lastCommitAt = now;
+  lastMotionGestureAt = now;
+  lastMotionGestureLabel = text;
+  wordFinalizedAfterGap = true;
+  poseHistory.length = 0; // reset motion buffer after commit
+  resetHold();
 
   addLogEntry({
     type: "word",
-    icon: known ? "✓" : "W",
-    title: `Word “${text}”`,
-    detail: `${Math.round(confidence * 100)}% · gesture · ${formatTime()}`,
-    known
+    icon: "✓",
+    title: `Gesture “${text}”`,
+    detail: `${Math.round(confidence * 100)}% · ${meta.how || "ASL sign"} · ${formatTime()}`,
+    known: true
   });
   updateStats();
   updateComposeUI();
   flashStatus(`Word: ${text}`);
+
+  // Optional speak word immediately for feedback
+  if (window.speechSynthesis && meta.speak !== false) {
+    try {
+      const utter = new SpeechSynthesisUtterance(text.toLowerCase());
+      utter.rate = 1;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utter);
+    } catch (_) {
+      /* ignore */
+    }
+  }
 }
 
 function finalizeWord(reason = "pause") {
@@ -843,19 +1182,24 @@ function showLive(pred) {
   currentPrediction = pred;
   if (!pred) {
     predictionEl.textContent = handVisible ? "…" : "—";
-    confidenceEl.textContent = handVisible ? "Reading hand…" : "Show your hand";
+    confidenceEl.textContent = handVisible
+      ? "Reading hand… try THANK YOU (chin→out) or ILY"
+      : "Show your hand";
     holdFill.style.width = "0%";
+    predictionEl.classList.remove("is-word");
     return;
   }
   predictionEl.textContent = pred.label;
-  const src = pred.source === "trained" ? "custom" : "live ASL";
+  predictionEl.classList.toggle("is-word", pred.kind === "word" || pred.label.length > 1);
+  let src = "letter";
+  if (pred.source === "trained") src = "custom";
+  else if (pred.kind === "word" || pred.source === "gesture") src = "word gesture";
+  else if (pred.kind === "space") src = "space";
+  else src = "letter";
   let meta = `${Math.round(pred.confidence * 100)}% · ${src}`;
-  if (pred.alt && pred.alt !== pred.label) {
-    meta += ` · vs ${pred.alt}`;
-  }
-  if (pred.pending && pred.pending !== pred.label) {
-    meta += ` · checking ${pred.pending}`;
-  }
+  if (pred.fireOnce) meta += " · motion";
+  if (pred.alt && pred.alt !== pred.label) meta += ` · vs ${pred.alt}`;
+  if (pred.pending && pred.pending !== pred.label) meta += ` · checking ${pred.pending}`;
   confidenceEl.textContent = meta;
 }
 
@@ -939,13 +1283,38 @@ function processHold(pred) {
   const now = performance.now();
   const label = pred.label.toUpperCase();
 
+  // ── Whole-word gestures ────────────────────
+  if (pred.kind === "word" || (pred.source === "gesture" && label.length > 1)) {
+    spaceHoldStartedAt = 0;
+
+    // Motion-complete signs (THANK YOU, HELLO, YES, NO, BYE) fire once
+    if (pred.fireOnce && pred.confidence >= 0.78) {
+      holdFill.style.width = "100%";
+      commitWholeWordGesture(label, pred.confidence, { how: "motion sign" });
+      return;
+    }
+
+    // Static word shapes (I LOVE YOU, GOOD, OK) — short hold
+    if (pred.confidence < 0.72) {
+      resetHold();
+      return;
+    }
+    const wordHold = Math.min(HOLD_MS, captureMode === "expert" ? 280 : 550);
+    tickHold(label, pred, now, () => {
+      commitWholeWordGesture(label, pred.confidence, { how: "handshape" });
+      resetHold();
+    }, wordHold);
+    return;
+  }
+
   // Space: open hand only ends a word if we are spelling
+  // (and not mid thank-you — word path already handled)
   if (pred.kind === "space" || label === "5") {
     holdLabel = null;
     holdStartedAt = 0;
     if (spelling.length === 0) {
       holdFill.style.width = "0%";
-      confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · open hand (space when spelling)`;
+      confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · open hand · move chin→out for THANK YOU`;
       return;
     }
     if (!spaceHoldStartedAt) spaceHoldStartedAt = now;
@@ -964,7 +1333,7 @@ function processHold(pred) {
 
   spaceHoldStartedAt = 0;
 
-  // Don't lock weak / ambiguous reads (stops O spam from partial poses)
+  // Don't lock weak / ambiguous reads
   if (pred.confidence < LOCK_MIN_CONF) {
     resetHold();
     confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · hold clearer pose to lock`;
@@ -974,7 +1343,7 @@ function processHold(pred) {
   // Trained whole words
   if (pred.source === "trained" && isWholeWordLabel(label)) {
     tickHold(label, pred, now, () => {
-      commitWholeWordGesture(label, pred.confidence);
+      commitWholeWordGesture(label, pred.confidence, { how: "trained" });
       resetHold();
     });
     return;
@@ -989,11 +1358,11 @@ function processHold(pred) {
     return;
   }
 
-  // Numbers / other — show only, don't spell
+  // Numbers / other — show only
   holdFill.style.width = "0%";
 }
 
-function tickHold(label, pred, now, onDone) {
+function tickHold(label, pred, now, onDone, holdMs = HOLD_MS) {
   if (label === lastCommittedLabel && now - lastCommitAt < COOLDOWN_MS) {
     holdFill.style.width = "0%";
     confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · ready for next sign`;
@@ -1005,10 +1374,11 @@ function tickHold(label, pred, now, onDone) {
     holdStartedAt = now;
   }
 
-  const p = Math.min(1, (now - holdStartedAt) / HOLD_MS);
+  const p = Math.min(1, (now - holdStartedAt) / holdMs);
   holdFill.style.width = `${p * 100}%`;
   if (p < 1) {
-    confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · locking ${Math.round(p * 100)}%`;
+    const kind = pred.kind === "word" ? "word" : "letter";
+    confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · locking ${kind} ${Math.round(p * 100)}%`;
   } else {
     onDone();
   }
@@ -1263,7 +1633,11 @@ async function processFrame() {
 }
 
 async function classifyHand(landmarks) {
-  // Optional trained KNN
+  // Always feed pose history for motion words (THANK YOU, HELLO, …)
+  const pose = pushPose(landmarks);
+  const wordPred = recognizeWordGesture(pose);
+
+  // Optional trained KNN (custom labels)
   if (classifier && sampleCount > 0 && typeof tf !== "undefined") {
     let tensor;
     try {
@@ -1271,13 +1645,20 @@ async function classifyHand(landmarks) {
       const result = await classifier.predictClass(tensor, 3);
       tensor.dispose();
       const conf = result.confidences[result.label] || 0;
-      if (conf >= 0.5) {
-        return {
+      if (conf >= 0.55) {
+        const trained = {
           label: String(result.label).toUpperCase(),
           confidence: conf,
           source: "trained",
-          kind: isLetterLabel(result.label) ? "letter" : "word"
+          kind: isLetterLabel(result.label) ? "letter" : "word",
+          fireOnce: false
         };
+        // Strong trained multi-letter beats built-in
+        if (trained.kind === "word" && conf >= 0.6) return trained;
+        if (trained.kind === "letter" && (!wordPred || conf > wordPred.confidence)) {
+          // still fuse with motion words
+          return fuseLetterAndWord(trained, wordPred) || trained;
+        }
       }
     } catch (e) {
       try {
@@ -1289,16 +1670,19 @@ async function classifyHand(landmarks) {
     }
   }
 
-  const builtIn = recognizeAsl(landmarks);
-  if (!builtIn) return null;
-  return {
-    ...builtIn,
-    source: "builtin",
-    // preserve disambiguation metadata for UI
-    alt: builtIn.alt,
-    pending: builtIn.pending,
-    margin: builtIn.margin
-  };
+  const letterPred = recognizeAsl(landmarks);
+  const fused = fuseLetterAndWord(
+    letterPred
+      ? {
+          ...letterPred,
+          source: letterPred.source || "builtin",
+          alt: letterPred.alt,
+          pending: letterPred.pending
+        }
+      : null,
+    wordPred
+  );
+  return fused;
 }
 
 // ── Training ─────────────────────────────────

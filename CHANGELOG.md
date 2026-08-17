@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.3] — 2026-08-16
+
+### Added
+- **Whole-word ASL gestures** with pose history + motion detection:
+  - **THANK YOU** (chin → out/down)
+  - **HELLO / HI** (wave)
+  - **I LOVE YOU** (ILY handshape)
+  - **YES** (fist nod), **NO** (two-finger shake), **BYE** (wave)
+  - **GOOD** (thumbs up), **OK** (OK handshape)
+- Word gestures commit into the sentence bar (and speak once for feedback)
+- On-page gesture guide listing how to produce each sign
+- Letter vs word fusion so ILY/THANK YOU win over confusable letters
+
 ## [0.2.2] — 2026-08-16
 
 ### Fixed (GitHub Pages ML)
