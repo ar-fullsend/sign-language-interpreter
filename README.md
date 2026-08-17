@@ -65,19 +65,21 @@ Toggle lives in the top bar; preference is saved in `localStorage`.
 ### Privacy & UX
 - **100% client-side** — no uploads, no accounts
 - Front / rear camera switch
-- Mirrored selfie preview
-- Responsive layout (desktop sidebar + mobile stacked)
+- Mirrored selfie preview (live `<video>` under a **transparent** landmark canvas)
 - Skeleton overlay so you always know tracking is alive
+- **Mobile-first detection UI**
+  - Large **Seeing now** panel **below** the camera (not over the photo)
+  - Fixed bottom dock with letter/word, spelling, words, Space / ⌫ / Speak
+  - Safari/iOS safe-area + `webkit-playsinline` support
 
 ---
 
 ## Live demo (GitHub Pages)
 
-Once Pages is enabled on this repo (`Settings → Pages → Deploy from branch → main / root`):
-
 **https://ar-fullsend.github.io/sign-language-interpreter/**
 
-That URL serves `index.html` as the site landing page (HTTPS, so camera works).
+Deployed automatically on every push to `main` via **GitHub Actions** (`.github/workflows/pages.yml`).  
+HTTPS is required for camera access.
 
 ## Quick start (local)
 

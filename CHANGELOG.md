@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.12] — 2026-08-17
+
+### Docs
+- README: mobile Seeing now / dock UX, transparent camera canvas, GitHub Actions Pages deploy
+- Project structure lists `.github/workflows/pages.yml`
+- How-to-use updated for live preview + word gestures
+
 ## [0.2.11] — 2026-08-17
 
 ### Fixed

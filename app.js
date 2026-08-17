@@ -1635,6 +1635,10 @@ async function startCamera() {
     const h = video.videoHeight || 480;
     canvas.width = w;
     canvas.height = h;
+    // Never cover the camera with an opaque canvas fill
+    canvas.style.background = "transparent";
+    video.style.opacity = "1";
+    video.style.visibility = "visible";
 
     // Mirror preview only (does not affect MediaPipe pixel buffer)
     const mirror = facingMode === "user";
