@@ -1146,7 +1146,10 @@ function setHoldProgress(pct) {
   if (hudHoldFill) hudHoldFill.style.width = w;
   if (dockHoldFill) dockHoldFill.style.width = w;
   const locking = pct > 2 && pct < 100;
-  if (hudPrediction) hudPrediction.classList.toggle("is-locking", locking);
+  if (hudPrediction) {
+    hudPrediction.classList.toggle("is-locking", locking);
+    hudPrediction.classList.toggle("detect-panel-value", true);
+  }
   if (dockPrediction) dockPrediction.classList.toggle("is-locking", locking);
 }
 

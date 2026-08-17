@@ -2,12 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.7] — 2026-08-17
+
+### Fixed (Chrome mobile stacking)
+- Detection no longer sits under `<video>` (Chrome compositing ignored z-index overlays)
+- **Seeing now** panel is in normal document flow directly under the camera
+- Mobile dock is **`position: fixed`** bottom (Chrome-safe; no sticky + nested overflow)
+- Single scroll container on mobile; video isolated in its own layer
+- Compact fixed dock with letter/word + spelling + actions always visible
+
 ## [0.2.6] — 2026-08-17
 
 ### Changed (mobile UX)
-- **Detection HUD** overlaid on the camera: large letter/word, confidence, hold meter, spelling + words
-- **Sticky mobile dock** under the video so “Seeing now” stays on screen while scrolling
-- Quick Space / ⌫ / Speak on the dock
+- Detection panel + mobile dock for live letter/word visibility
 - Gesture guide collapsed by default; guides moved below translation
 - Portrait camera framing on phones
 

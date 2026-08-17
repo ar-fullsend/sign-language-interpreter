@@ -40,42 +40,49 @@
       </header>
 
       <div class="stage-body">
+        <!-- Camera + detection in normal flow (Chrome cannot bury this under <video>) -->
         <div class="video-wrap">
           <div class="video-container">
-            <video id="webcam" autoplay playsinline muted></video>
-            <canvas id="output"></canvas>
+            <div class="video-layer" aria-hidden="true">
+              <video id="webcam" autoplay playsinline muted></video>
+              <canvas id="output"></canvas>
+            </div>
             <div id="status" class="status">Camera off</div>
             <div id="live-badge" class="live-badge" hidden>LIVE</div>
+          </div>
 
-            <!-- Always-on detection overlay (critical on mobile) -->
-            <div class="detect-hud" id="detect-hud" aria-live="polite">
-              <div class="detect-hud-top">
-                <span class="detect-hud-kicker" id="hud-kicker">Seeing now</span>
-                <span class="detect-hud-pct" id="hud-pct"></span>
+          <!-- Primary “seeing now” panel — immediately under camera, always in the stack -->
+          <section class="detect-panel" id="detect-hud" aria-live="polite" aria-label="Live detection">
+            <div class="detect-panel-top">
+              <span class="detect-panel-kicker" id="hud-kicker">Seeing now</span>
+              <span class="detect-panel-pct" id="hud-pct"></span>
+            </div>
+            <div class="detect-panel-value" id="hud-prediction">—</div>
+            <!-- Keep id="prediction" for desktop card sync / a11y -->
+            <div id="prediction" class="visually-hidden" aria-hidden="true">—</div>
+            <div class="detect-panel-meta" id="hud-confidence">Start camera to detect</div>
+            <div id="confidence" class="visually-hidden" aria-hidden="true"></div>
+            <div class="detect-panel-meter" aria-hidden="true">
+              <div class="detect-panel-fill" id="hud-hold-fill"></div>
+              <div id="hold-fill" class="visually-hidden" aria-hidden="true"></div>
+            </div>
+            <div class="detect-panel-row">
+              <div class="detect-panel-mini">
+                <span class="detect-panel-mini-label">Spelling</span>
+                <span class="detect-panel-mini-text" id="hud-spelling">—</span>
               </div>
-              <div class="detect-hud-value" id="hud-prediction">—</div>
-              <div class="detect-hud-meta" id="hud-confidence">Start camera to detect</div>
-              <div class="detect-hud-meter" aria-hidden="true">
-                <div class="detect-hud-fill" id="hud-hold-fill"></div>
-              </div>
-              <div class="detect-hud-row">
-                <div class="detect-hud-mini">
-                  <span class="detect-hud-mini-label">Spelling</span>
-                  <span class="detect-hud-mini-text" id="hud-spelling">—</span>
-                </div>
-                <div class="detect-hud-mini">
-                  <span class="detect-hud-mini-label">Words</span>
-                  <span class="detect-hud-mini-text" id="hud-sentence">—</span>
-                </div>
+              <div class="detect-panel-mini">
+                <span class="detect-panel-mini-label">Words</span>
+                <span class="detect-panel-mini-text" id="hud-sentence">—</span>
               </div>
             </div>
-          </div>
+          </section>
         </div>
 
-        <!-- Sticky mobile dock: always shows detection + quick actions -->
-        <div class="mobile-dock" id="mobile-dock" aria-label="Live translation">
+        <!-- Fixed bottom bar on mobile (Chrome-safe; no sticky/overflow bugs) -->
+        <div class="mobile-dock" id="mobile-dock" aria-label="Live translation actions">
           <div class="mobile-dock-see">
-            <div class="mobile-dock-kicker">Seeing now</div>
+            <div class="mobile-dock-kicker">Seeing</div>
             <div class="mobile-dock-value" id="dock-prediction">—</div>
             <div class="mobile-dock-meta" id="dock-confidence">Camera off</div>
             <div class="mobile-dock-meter" aria-hidden="true">
@@ -84,7 +91,7 @@
           </div>
           <div class="mobile-dock-text">
             <div class="mobile-dock-line">
-              <span class="mobile-dock-label">Spelling</span>
+              <span class="mobile-dock-label">Spell</span>
               <span id="dock-spelling" class="mobile-dock-copy">—</span>
             </div>
             <div class="mobile-dock-line">
@@ -99,16 +106,7 @@
           </div>
         </div>
 
-        <section class="readout" aria-label="Translation readout">
-          <div class="live-letter-card">
-            <div class="field-label">Seeing now</div>
-            <div id="prediction" class="live-letter">—</div>
-            <div id="confidence" class="confidence">Start the camera, then hold a clear ASL letter</div>
-            <div class="hold-meter" aria-hidden="true">
-              <div id="hold-fill" class="hold-fill"></div>
-            </div>
-          </div>
-
+        <section class="readout" aria-label="Translation compose">
           <div class="compose-card">
             <div class="compose-row">
               <div class="field-label">Spelling</div>
