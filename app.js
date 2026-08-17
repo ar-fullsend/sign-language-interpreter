@@ -4,11 +4,12 @@
  * Live ML always updates; hold-to-lock commits letters into words.
  */
 
+// Explicit .mjs path — bare package URLs break as ES modules on some hosts (incl. GH Pages)
 import {
   HandLandmarker,
   FilesetResolver,
   DrawingUtils
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
 // ── DOM ──────────────────────────────────────
 const video = document.getElementById("webcam");
@@ -148,38 +149,96 @@ const PHRASES = [
 ];
 
 // ── MediaPipe ────────────────────────────────
-async function createHandLandmarker() {
-  statusEl.textContent = "Loading MediaPipe…";
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-  );
+// Same-origin model (works on GitHub Pages without relying on Google Storage)
+// Resolve relative to this module so /repo-name/ paths stay correct.
+const MODEL_URL = new URL("./models/hand_landmarker.task", import.meta.url).href;
+const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/";
+// Fallback if local model 404s (old deploy without models/)
+const MODEL_URL_FALLBACK =
+  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 
-  const modelPath =
-    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+let framesWithoutHand = 0;
+let triedCpuFallback = false;
+let modelsReady = false;
+let modelsError = null;
 
-  const opts = (delegate) => ({
+function landmarkerOptions(modelPath, delegate) {
+  return {
     baseOptions: { modelAssetPath: modelPath, delegate },
     runningMode: "VIDEO",
     numHands: 2,
-    minHandDetectionConfidence: 0.35,
-    minHandPresenceConfidence: 0.35,
-    minTrackingConfidence: 0.35
-  });
+    minHandDetectionConfidence: 0.3,
+    minHandPresenceConfidence: 0.3,
+    minTrackingConfidence: 0.3
+  };
+}
 
-  // CPU first on problematic GPUs (Surface/WSL/ARM often flake on GPU)
+async function resolveModelUrl() {
+  // Prefer same-origin model (GitHub Pages + local)
+  try {
+    const head = await fetch(MODEL_URL, { method: "HEAD", cache: "force-cache" });
+    if (head.ok) return MODEL_URL;
+  } catch (_) {
+    /* try GET range or full fallback */
+  }
+  try {
+    const get = await fetch(MODEL_URL, { method: "GET", cache: "force-cache" });
+    if (get.ok) return MODEL_URL;
+  } catch (_) {
+    /* fall through */
+  }
+  console.warn("Local model missing, using CDN fallback", MODEL_URL);
+  return MODEL_URL_FALLBACK;
+}
+
+async function createHandLandmarker() {
+  statusEl.textContent = "Loading MediaPipe…";
+  modelsReady = false;
+  modelsError = null;
+
+  const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+  const modelPath = await resolveModelUrl();
+  statusEl.textContent = "Loading hand model…";
+
+  // CPU first — most reliable on Surface / ARM / locked-down GPUs / remote Pages
   let used = "CPU";
   try {
-    handLandmarker = await HandLandmarker.createFromOptions(vision, opts("GPU"));
+    handLandmarker = await HandLandmarker.createFromOptions(
+      vision,
+      landmarkerOptions(modelPath, "CPU")
+    );
+  } catch (cpuErr) {
+    console.warn("CPU MediaPipe failed, trying GPU", cpuErr);
+    handLandmarker = await HandLandmarker.createFromOptions(
+      vision,
+      landmarkerOptions(modelPath, "GPU")
+    );
     used = "GPU";
-  } catch (e) {
-    console.warn("GPU MediaPipe failed, using CPU", e);
-    handLandmarker = await HandLandmarker.createFromOptions(vision, opts("CPU"));
-    used = "CPU";
   }
 
-  // If GPU "succeeded" but is known flaky, keep it; we can recreate on demand later
+  // Optional GPU upgrade if CPU worked (ignore failure)
+  if (used === "CPU") {
+    try {
+      const gpuLm = await HandLandmarker.createFromOptions(
+        vision,
+        landmarkerOptions(modelPath, "GPU")
+      );
+      try {
+        handLandmarker.close();
+      } catch (_) {
+        /* ignore */
+      }
+      handLandmarker = gpuLm;
+      used = "GPU";
+    } catch (_) {
+      /* keep CPU */
+    }
+  }
+
   drawingUtils = new DrawingUtils(ctx);
+  modelsReady = true;
   statusEl.textContent = `MediaPipe ready (${used})`;
+  if (btnStart) btnStart.disabled = false;
   return used;
 }
 
@@ -193,21 +252,15 @@ async function recreateLandmarkerCpu() {
         /* ignore */
       }
     }
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+    const modelPath = await resolveModelUrl();
+    handLandmarker = await HandLandmarker.createFromOptions(
+      vision,
+      landmarkerOptions(modelPath, "CPU")
     );
-    const modelPath =
-      "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
-    handLandmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: modelPath, delegate: "CPU" },
-      runningMode: "VIDEO",
-      numHands: 2,
-      minHandDetectionConfidence: 0.35,
-      minHandPresenceConfidence: 0.35,
-      minTrackingConfidence: 0.35
-    });
     lastTimestamp = 0;
     lastVideoTime = -1;
+    modelsReady = true;
     statusEl.textContent = "MediaPipe ready (CPU)";
     addLogEntry({
       type: "system",
@@ -219,9 +272,6 @@ async function recreateLandmarkerCpu() {
     console.error("CPU recreate failed", e);
   }
 }
-
-let framesWithoutHand = 0;
-let triedCpuFallback = false;
 
 // ── KNN ──────────────────────────────────────
 function createClassifier() {
@@ -968,6 +1018,23 @@ function tickHold(label, pred, now, onDone) {
 async function startCamera() {
   if (stream) stopCamera(false);
 
+  // Ensure models are loaded (Pages can be slow; user may click early)
+  if (!handLandmarker) {
+    statusEl.textContent = "Loading models first…";
+    try {
+      await createHandLandmarker();
+    } catch (e) {
+      console.error(e);
+      statusEl.textContent = "Model load failed";
+      alert(
+        "Hand tracking model failed to load.\n\n" +
+          (e && e.message ? e.message : e) +
+          "\n\nHard-refresh the page (Ctrl+Shift+R) and try again."
+      );
+      return;
+    }
+  }
+
   try {
     statusEl.textContent = "Requesting camera…";
     stream = await navigator.mediaDevices.getUserMedia({
@@ -1085,7 +1152,13 @@ function loop() {
 }
 
 async function tick() {
-  if (!running || !handLandmarker) return;
+  if (!running) return;
+
+  // Keep the loop alive even while models finish loading
+  if (!handLandmarker) {
+    if (running) loop();
+    return;
+  }
 
   try {
     await processFrame();
@@ -1316,6 +1389,9 @@ document.addEventListener("keydown", (e) => {
 
 // ── Boot ─────────────────────────────────────
 (async function init() {
+  // Disable start until models load (re-enabled in createHandLandmarker)
+  if (btnStart) btnStart.disabled = true;
+
   try {
     let saved = "novice";
     try {
@@ -1328,6 +1404,10 @@ document.addEventListener("keydown", (e) => {
     createClassifier();
     updateComposeUI();
     updateStats();
+
+    statusEl.textContent = "Loading models…";
+    confidenceEl.textContent = "Downloading hand tracker (first visit may take a few seconds)…";
+
     const backend = await createHandLandmarker();
     statusEl.textContent = "Ready – press Start Camera";
     predictionEl.textContent = "—";
@@ -1337,15 +1417,27 @@ document.addEventListener("keydown", (e) => {
       type: "system",
       icon: "✓",
       title: "Models ready",
-      detail: `${backend} · ${cfg.label} ~${(cfg.holdMs / 1000).toFixed(2)}s · ${formatTime()}`
+      detail: `${backend} · model ${MODEL_URL.includes("models/") ? "local" : "cdn"} · ${formatTime()}`
     });
   } catch (err) {
     console.error(err);
+    modelsError = err;
     statusEl.textContent = "Failed to load models";
+    confidenceEl.textContent = "Check console / network, then refresh";
+    if (btnStart) {
+      btnStart.disabled = false;
+      btnStart.title = "Will retry loading models";
+    }
+    addLogEntry({
+      type: "system",
+      icon: "!",
+      title: "Model load failed",
+      detail: String(err && err.message ? err.message : err)
+    });
     alert(
       "Could not load MediaPipe models.\n\n" +
         (err && err.message ? err.message : err) +
-        "\n\nCheck internet and refresh."
+        "\n\nHard-refresh (Ctrl+Shift+R). On GitHub Pages the model loads from this site."
     );
   }
 })();

@@ -147,13 +147,18 @@ Optional: TensorFlow.js KNN (custom trained labels override when present)
 
 ```
 .
-├── index.html    # Shell: stage + activity sidebar + controls
-├── style.css     # Layout, dark UI, responsive sidebar
-├── app.js        # Camera, MediaPipe, recognizer, spelling, log
-└── README.md     # This file
+├── index.html                      # Shell: stage + activity sidebar + controls
+├── style.css                       # Layout, dark UI, responsive sidebar
+├── app.js                          # Camera, MediaPipe, recognizer, spelling, log
+├── models/
+│   └── hand_landmarker.task        # MediaPipe hand model (same-origin for Pages)
+├── CHANGELOG.md
+└── README.md
 ```
 
 No bundler, no npm install required to run — open via a static file server.
+
+> **GitHub Pages note:** the hand model is served from this repo (`models/`) so tracking works without calling Google Storage. MediaPipe WASM still loads from jsDelivr.
 
 ---
 

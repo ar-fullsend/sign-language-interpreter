@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.2] — 2026-08-16
+
+### Fixed (GitHub Pages ML)
+- Import MediaPipe via explicit `vision_bundle.mjs` (bare package URL failed as ESM on Pages)
+- Host `models/hand_landmarker.task` **same-origin** (no dependency on Google Storage for the model)
+- Resolve model URL with `import.meta.url` so `/sign-language-interpreter/` paths work
+- WASM path uses trailing slash; **CPU-first** load for broader device support
+- Detection loop no longer dies if the model isn’t ready yet
+- Start Camera waits/retries model load; clearer load errors in the activity log
+- `<base href="./">` for correct relative assets on project Pages
+
 ## [0.2.1] — 2026-08-16
 
 ### Changed

@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>ASL Translator</title>
   <meta name="description" content="Privacy-first ASL letter and word translator. Camera + MediaPipe + on-device ML." />
+  <!-- Keep relative assets correct on GitHub Pages (/repo-name/) -->
+  <base href="./" />
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.4/dist/knn-classifier.min.js"></script>
@@ -31,7 +33,7 @@
               Expert
             </button>
           </div>
-          <button id="btn-start" class="btn primary">Start Camera</button>
+          <button id="btn-start" class="btn primary" disabled title="Loading models…">Start Camera</button>
           <button id="btn-stop" class="btn" disabled>Stop</button>
           <button id="btn-switch" class="btn" disabled title="Switch front/rear">Flip</button>
         </div>
