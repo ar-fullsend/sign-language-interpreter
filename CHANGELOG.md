@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.4] — 2026-08-16
+
+### Fixed
+- Hand tracking model load failures on Pages / restricted networks:
+  - Fetch model as **bytes** (`modelAssetBuffer`) with multi-host fallbacks
+  - Multiple WASM CDNs (jsDelivr + unpkg)
+  - Removed fragile full-file preflight + GPU swap that could kill a working CPU model
+  - Clearer on-screen load progress and console diagnostics
+
 ## [0.2.3] — 2026-08-16
 
 ### Added
