@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.10] — 2026-08-17
+
+### Fixed
+- **Camera preview blank/collapsed**: `height: 0` + `box-sizing: border-box` zeroed the video frame
+- Restored real height via `aspect-ratio` + `min-height` so the stream is visible again
+
 ## [0.2.9] — 2026-08-17
 
 ### Fixed (Safari / iOS layout)
