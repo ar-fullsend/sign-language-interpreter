@@ -14,7 +14,8 @@ import {
 // ── DOM ──────────────────────────────────────
 const video = document.getElementById("webcam");
 const canvas = document.getElementById("output");
-const ctx = canvas.getContext("2d");
+// alpha:true so clearRect reveals the live <video> underneath (not a black plate)
+const ctx = canvas.getContext("2d", { alpha: true });
 const statusEl = document.getElementById("status");
 const predictionEl = document.getElementById("prediction");
 const confidenceEl = document.getElementById("confidence");

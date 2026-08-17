@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.11] — 2026-08-17
+
+### Fixed
+- **Camera feed not visible while tracking worked**: landmark canvas sat on top of `<video>` with `background: #000`, hiding the live preview
+- Canvas is transparent again; only skeleton overlay is drawn on top of the camera
+
 ## [0.2.10] — 2026-08-17
 
 ### Fixed

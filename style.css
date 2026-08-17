@@ -221,11 +221,22 @@ body {
   border: 0;
   margin: 0;
   padding: 0;
-  background: #000;
 }
 
+/* Video is the live feed */
+#webcam {
+  z-index: 0;
+  background: #000;
+  /* Keep mirror on front camera via JS style; ensure element is visible */
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Canvas is ONLY landmark overlay — must stay transparent so video shows through */
 #output {
+  z-index: 1;
   pointer-events: none;
+  background: transparent;
 }
 
 
