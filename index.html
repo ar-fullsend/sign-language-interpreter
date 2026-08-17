@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0c0e12" />
   <title>ASL Translator</title>
   <meta name="description" content="Privacy-first ASL letter and word translator. Camera + MediaPipe + on-device ML." />
   <!-- Keep relative assets correct on GitHub Pages (/repo-name/) -->
@@ -43,7 +46,7 @@
         <!-- Camera only (nothing detection-related inside — prevents Chrome video paint-over) -->
         <div class="video-wrap">
           <div class="video-container">
-            <video id="webcam" autoplay playsinline muted></video>
+            <video id="webcam" autoplay playsinline webkit-playsinline muted></video>
             <canvas id="output"></canvas>
             <div id="status" class="status">Camera off</div>
             <div id="live-badge" class="live-badge" hidden>LIVE</div>

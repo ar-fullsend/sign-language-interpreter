@@ -1611,9 +1611,11 @@ async function startCamera() {
     });
 
     video.srcObject = stream;
-    // Critical: playsInline + mute for autoplay policies
+    // Critical for Safari iOS: playsInline + mute (autoplay / inline camera)
     video.muted = true;
+    video.playsInline = true;
     video.setAttribute("playsinline", "true");
+    video.setAttribute("webkit-playsinline", "true");
     await video.play();
 
     // Wait for dimensions

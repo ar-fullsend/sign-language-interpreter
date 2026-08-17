@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.9] — 2026-08-17
+
+### Fixed (Safari / iOS layout)
+- `viewport-fit=cover` + safe-area padding (`constant()` + `env()`) for home indicator
+- `-webkit-fill-available` height fallbacks for iOS Safari address bar
+- `webkit-playsinline` on camera video; 16px inputs to avoid focus zoom
+- Softened `contain` / removed transforms that glitch with Safari video
+- Opaque fixed bottom dock (no backdrop-filter over video)
+- Touch scrolling (`-webkit-overflow-scrolling`) and reduced overscroll
+
 ## [0.2.8] — 2026-08-17
 
 ### Fixed
