@@ -974,10 +974,9 @@ body {
   }
 
   .video-container {
-    /* Shorter frame on phones so Seeing now fits above the dock */
-    height: 0;
-    padding-bottom: 52%;
-    max-height: none;
+    aspect-ratio: 4 / 3;
+    min-height: 200px;
+    max-height: min(42vh, 360px);
     border-radius: 16px;
   }
 
@@ -1152,7 +1151,9 @@ body {
   }
 
   .video-container {
-    padding-bottom: 48%;
+    aspect-ratio: 4 / 3;
+    min-height: 180px;
+    max-height: min(38vh, 320px);
   }
 
   .detect-panel {
