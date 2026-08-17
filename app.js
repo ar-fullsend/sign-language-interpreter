@@ -149,25 +149,23 @@ const PHRASES = [
 ];
 
 // ── MediaPipe ────────────────────────────────
-// Robust multi-source load for GitHub Pages / corporate networks / flaky CDN.
-// Prefer fetching model bytes ourselves (modelAssetBuffer) over modelAssetPath.
-const MEDIAPIPE_VERSION = "0.10.14";
-const LOCAL_MODEL_URL = new URL("./models/hand_landmarker.task", import.meta.url).href;
-
-const MODEL_CANDIDATES = [
-  LOCAL_MODEL_URL,
-  // jsDelivr GitHub mirror (good CORS)
-  `https://cdn.jsdelivr.net/gh/ar-fullsend/sign-language-interpreter@main/models/hand_landmarker.task`,
-  // Google official host
-  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-  // raw.githubusercontent.com
-  "https://raw.githubusercontent.com/ar-fullsend/sign-language-interpreter/main/models/hand_landmarker.task"
-];
+// Self-hosted WASM + model on GitHub Pages (same-origin), with CDN fallbacks.
+// Uses official createFromModelPath / createFromModelBuffer / createFromOptions.
+const MP_VER = "0.10.14";
+const LOCAL_WASM = new URL("./wasm/", import.meta.url).href;
+const LOCAL_MODEL = new URL("./models/hand_landmarker.task", import.meta.url).href;
 
 const WASM_CANDIDATES = [
-  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm/`,
-  `https://unpkg.com/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm/`,
-  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`
+  LOCAL_WASM,
+  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm/`,
+  `https://unpkg.com/@mediapipe/tasks-vision@${MP_VER}/wasm/`
+];
+
+const MODEL_CANDIDATES = [
+  LOCAL_MODEL,
+  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+  `https://cdn.jsdelivr.net/gh/ar-fullsend/sign-language-interpreter@main/models/hand_landmarker.task`,
+  "https://raw.githubusercontent.com/ar-fullsend/sign-language-interpreter/main/models/hand_landmarker.task"
 ];
 
 let framesWithoutHand = 0;
@@ -176,153 +174,170 @@ let modelsReady = false;
 let modelsError = null;
 let lastModelSource = "";
 let lastWasmSource = "";
+let lastCreateDetail = "";
 
-function landmarkerOptionsFromBuffer(buffer, delegate) {
-  return {
-    baseOptions: {
-      modelAssetBuffer: buffer,
-      delegate
-    },
-    runningMode: "VIDEO",
-    numHands: 2,
-    minHandDetectionConfidence: 0.3,
-    minHandPresenceConfidence: 0.3,
-    minTrackingConfidence: 0.3
-  };
+function errText(e) {
+  if (!e) return "unknown error";
+  if (typeof e === "string") return e;
+  return e.message || e.toString?.() || String(e);
 }
 
-function landmarkerOptionsFromPath(modelPath, delegate) {
-  return {
-    baseOptions: {
-      modelAssetPath: modelPath,
-      delegate
-    },
-    runningMode: "VIDEO",
-    numHands: 2,
-    minHandDetectionConfidence: 0.3,
-    minHandPresenceConfidence: 0.3,
-    minTrackingConfidence: 0.3
-  };
-}
-
-/** Download model bytes from the first working URL. */
-async function loadModelBuffer() {
-  const errors = [];
-  for (const url of MODEL_CANDIDATES) {
-    try {
-      statusEl.textContent = "Downloading hand model…";
-      confidenceEl.textContent = url.includes("models/hand")
-        ? "Loading model from this site…"
-        : "Trying backup model host…";
-      const res = await fetch(url, { cache: "no-store", mode: "cors" });
-      if (!res.ok) {
-        errors.push(`${url} → HTTP ${res.status}`);
-        continue;
-      }
-      const ab = await res.arrayBuffer();
-      if (!ab || ab.byteLength < 50_000) {
-        errors.push(`${url} → too small (${ab ? ab.byteLength : 0} bytes)`);
-        continue;
-      }
-      lastModelSource = url;
-      console.info("Hand model loaded from", url, ab.byteLength, "bytes");
-      return new Uint8Array(ab);
-    } catch (e) {
-      errors.push(`${url} → ${e && e.message ? e.message : e}`);
-      console.warn("Model fetch failed", url, e);
-    }
+async function fetchModelBytes(url) {
+  const res = await fetch(url, { cache: "reload", mode: "cors" });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for model`);
+  const ab = await res.arrayBuffer();
+  if (!ab || ab.byteLength < 50_000) {
+    throw new Error(`Model too small (${ab ? ab.byteLength : 0} bytes)`);
   }
-  throw new Error("Could not download hand model:\n" + errors.join("\n"));
-}
-
-/** Init WASM fileset from the first working CDN. */
-async function loadVisionFileset() {
-  const errors = [];
-  for (const wasm of WASM_CANDIDATES) {
-    try {
-      statusEl.textContent = "Loading MediaPipe runtime…";
-      const vision = await FilesetResolver.forVisionTasks(wasm);
-      lastWasmSource = wasm;
-      console.info("MediaPipe WASM from", wasm);
-      return vision;
-    } catch (e) {
-      errors.push(`${wasm} → ${e && e.message ? e.message : e}`);
-      console.warn("WASM load failed", wasm, e);
-    }
-  }
-  throw new Error("Could not load MediaPipe WASM:\n" + errors.join("\n"));
+  // Fresh copy — MediaPipe may detach/transfer buffers
+  return new Uint8Array(ab).slice();
 }
 
 /**
- * Create HandLandmarker with buffer + path fallbacks, CPU then GPU.
- * Never replaces a working CPU instance with a flaky GPU one.
+ * Apply VIDEO mode after createFromModelPath/Buffer (those APIs default to IMAGE).
+ */
+async function configureForVideo(lm) {
+  try {
+    await lm.setOptions({
+      runningMode: "VIDEO",
+      numHands: 2,
+      minHandDetectionConfidence: 0.3,
+      minHandPresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3
+    });
+  } catch (e) {
+    // Older builds may not support all fields together
+    await lm.setOptions({ runningMode: "VIDEO", numHands: 2 });
+  }
+  return lm;
+}
+
+/**
+ * Try every combination until HandLandmarker is created.
  */
 async function createHandLandmarker() {
   statusEl.textContent = "Loading MediaPipe…";
   modelsReady = false;
   modelsError = null;
+  lastCreateDetail = "";
   if (btnStart) btnStart.disabled = true;
 
-  const vision = await loadVisionFileset();
-
-  // Prefer in-memory model (avoids second CORS fetch inside WASM)
-  let modelBuffer = null;
-  let modelBufferErr = null;
-  try {
-    modelBuffer = await loadModelBuffer();
-  } catch (e) {
-    modelBufferErr = e;
-    console.warn("Buffer load failed, will try modelAssetPath", e);
+  if (typeof HandLandmarker === "undefined" || typeof FilesetResolver === "undefined") {
+    throw new Error(
+      "MediaPipe library failed to import. Check that vision_bundle.mjs is not blocked."
+    );
   }
 
-  statusEl.textContent = "Starting hand tracker…";
   const errors = [];
 
-  const tryCreate = async (delegate, label) => {
-    // 1) buffer
-    if (modelBuffer) {
+  for (const wasmUrl of WASM_CANDIDATES) {
+    let vision;
+    try {
+      statusEl.textContent = "Loading MediaPipe runtime…";
+      confidenceEl.textContent = wasmUrl.includes("/wasm/") && wasmUrl.startsWith("http")
+        ? "Loading runtime from CDN…"
+        : "Loading runtime from this site…";
+      vision = await FilesetResolver.forVisionTasks(wasmUrl);
+      lastWasmSource = wasmUrl;
+    } catch (e) {
+      errors.push(`WASM ${wasmUrl} → ${errText(e)}`);
+      console.warn("WASM failed", wasmUrl, e);
+      continue;
+    }
+
+    for (const modelUrl of MODEL_CANDIDATES) {
+      // --- A) Official sample style: createFromOptions + modelAssetPath ---
+      for (const delegate of ["CPU", "GPU"]) {
+        try {
+          statusEl.textContent = `Starting tracker (${delegate})…`;
+          confidenceEl.textContent = "createFromOptions + model path";
+          const lm = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: modelUrl,
+              delegate
+            },
+            runningMode: "VIDEO",
+            numHands: 2,
+            minHandDetectionConfidence: 0.3,
+            minHandPresenceConfidence: 0.3,
+            minTrackingConfidence: 0.3
+          });
+          handLandmarker = lm;
+          lastModelSource = modelUrl;
+          return finishLandmarker(delegate);
+        } catch (e) {
+          errors.push(`options/${delegate}/path → ${errText(e)}`);
+          console.warn("createFromOptions path failed", delegate, modelUrl, e);
+        }
+      }
+
+      // --- B) createFromModelPath then set VIDEO ---
       try {
-        const lm = await HandLandmarker.createFromOptions(
-          vision,
-          landmarkerOptionsFromBuffer(modelBuffer, delegate)
-        );
-        return lm;
+        statusEl.textContent = "Starting tracker (model path)…";
+        confidenceEl.textContent = "createFromModelPath";
+        const lm = await HandLandmarker.createFromModelPath(vision, modelUrl);
+        await configureForVideo(lm);
+        handLandmarker = lm;
+        lastModelSource = modelUrl;
+        return finishLandmarker("default");
       } catch (e) {
-        errors.push(`${label}/buffer → ${e && e.message ? e.message : e}`);
+        errors.push(`createFromModelPath → ${errText(e)}`);
+        console.warn("createFromModelPath failed", modelUrl, e);
+      }
+
+      // --- C) Fetch bytes + createFromModelBuffer ---
+      try {
+        statusEl.textContent = "Downloading model bytes…";
+        confidenceEl.textContent = modelUrl.includes(location.host)
+          ? "From this site…"
+          : "From backup host…";
+        const bytes = await fetchModelBytes(modelUrl);
+
+        try {
+          statusEl.textContent = "Starting tracker (buffer)…";
+          const lm = await HandLandmarker.createFromModelBuffer(vision, bytes.slice());
+          await configureForVideo(lm);
+          handLandmarker = lm;
+          lastModelSource = modelUrl + "#buffer";
+          return finishLandmarker("default");
+        } catch (e1) {
+          errors.push(`createFromModelBuffer → ${errText(e1)}`);
+        }
+
+        // --- D) createFromOptions + modelAssetBuffer CPU/GPU ---
+        for (const delegate of ["CPU", "GPU"]) {
+          try {
+            const lm = await HandLandmarker.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetBuffer: bytes.slice(),
+                delegate
+              },
+              runningMode: "VIDEO",
+              numHands: 2
+            });
+            handLandmarker = lm;
+            lastModelSource = modelUrl + "#buffer-" + delegate;
+            return finishLandmarker(delegate);
+          } catch (e2) {
+            errors.push(`options/${delegate}/buffer → ${errText(e2)}`);
+          }
+        }
+      } catch (e) {
+        errors.push(`fetch model ${modelUrl.slice(0, 70)} → ${errText(e)}`);
       }
     }
-    // 2) path candidates
-    for (const path of MODEL_CANDIDATES) {
-      try {
-        const lm = await HandLandmarker.createFromOptions(
-          vision,
-          landmarkerOptionsFromPath(path, delegate)
-        );
-        lastModelSource = path;
-        return lm;
-      } catch (e) {
-        errors.push(`${label}/path ${path.slice(0, 60)}… → ${e && e.message ? e.message : e}`);
-      }
-    }
-    return null;
-  };
-
-  // CPU first (most reliable)
-  handLandmarker = await tryCreate("CPU", "CPU");
-  let used = "CPU";
-
-  if (!handLandmarker) {
-    handLandmarker = await tryCreate("GPU", "GPU");
-    used = "GPU";
   }
 
-  if (!handLandmarker) {
-    const detail =
-      (modelBufferErr ? String(modelBufferErr.message || modelBufferErr) + "\n" : "") +
-      errors.slice(-8).join("\n");
-    throw new Error("HandLandmarker create failed.\n" + detail);
-  }
+  lastCreateDetail = errors.slice(-12).join("\n");
+  console.error("All HandLandmarker create attempts failed:\n" + lastCreateDetail);
+  throw new Error(
+    "HandLandmarker create failed.\n\n" +
+      lastCreateDetail +
+      "\n\nTip: hard-refresh (Ctrl+Shift+R). Need WebAssembly enabled."
+  );
+}
 
+function finishLandmarker(used) {
   drawingUtils = new DrawingUtils(ctx);
   modelsReady = true;
   statusEl.textContent = `MediaPipe ready (${used})`;
@@ -331,13 +346,17 @@ async function createHandLandmarker() {
     btnStart.disabled = false;
     btnStart.title = "Start camera";
   }
-  console.info("HandLandmarker ready", { used, model: lastModelSource, wasm: lastWasmSource });
+  console.info("HandLandmarker ready", {
+    used,
+    model: lastModelSource,
+    wasm: lastWasmSource
+  });
   return used;
 }
 
 async function recreateLandmarkerCpu() {
   try {
-    statusEl.textContent = "Switching MediaPipe to CPU…";
+    statusEl.textContent = "Reconnecting tracker…";
     if (handLandmarker) {
       try {
         handLandmarker.close();
@@ -346,36 +365,17 @@ async function recreateLandmarkerCpu() {
       }
       handLandmarker = null;
     }
-    const vision = await loadVisionFileset();
-    let buffer = null;
-    try {
-      buffer = await loadModelBuffer();
-    } catch (_) {
-      /* path fallback below */
-    }
-    if (buffer) {
-      handLandmarker = await HandLandmarker.createFromOptions(
-        vision,
-        landmarkerOptionsFromBuffer(buffer, "CPU")
-      );
-    } else {
-      handLandmarker = await HandLandmarker.createFromOptions(
-        vision,
-        landmarkerOptionsFromPath(LOCAL_MODEL_URL, "CPU")
-      );
-    }
+    await createHandLandmarker();
     lastTimestamp = 0;
     lastVideoTime = -1;
-    modelsReady = true;
-    statusEl.textContent = "MediaPipe ready (CPU)";
     addLogEntry({
       type: "system",
       icon: "CPU",
-      title: "Switched to CPU tracking",
+      title: "Tracker reloaded",
       detail: formatTime()
     });
   } catch (e) {
-    console.error("CPU recreate failed", e);
+    console.error("recreate failed", e);
   }
 }
 

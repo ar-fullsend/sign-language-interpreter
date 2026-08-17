@@ -165,14 +165,20 @@ Optional: TensorFlow.js KNN (custom trained labels override when present)
 ├── style.css                       # Layout, dark UI, responsive sidebar
 ├── app.js                          # Camera, MediaPipe, recognizer, spelling, log
 ├── models/
-│   └── hand_landmarker.task        # MediaPipe hand model (same-origin for Pages)
+│   └── hand_landmarker.task        # MediaPipe hand model (~7.5MB)
+├── wasm/                           # MediaPipe WASM runtime (self-hosted for Pages)
+│   ├── vision_wasm_internal.js
+│   ├── vision_wasm_internal.wasm
+│   ├── vision_wasm_nosimd_internal.js
+│   └── vision_wasm_nosimd_internal.wasm
+├── .nojekyll                       # Required so GitHub Pages serves wasm/ as static files
 ├── CHANGELOG.md
 └── README.md
 ```
 
 No bundler, no npm install required to run — open via a static file server.
 
-> **GitHub Pages note:** the hand model is served from this repo (`models/`) so tracking works without calling Google Storage. MediaPipe WASM still loads from jsDelivr.
+> **GitHub Pages note:** model + WASM are **same-origin** under `models/` and `wasm/` so tracking does not depend on Google Storage or jsDelivr for the core runtime (CDN remains as fallback).
 
 ---
 

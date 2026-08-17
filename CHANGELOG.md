@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.5] — 2026-08-16
+
+### Fixed
+- **HandLandmarker create failed** on GitHub Pages / Surface:
+  - Self-host full MediaPipe **WASM** under `wasm/` (same-origin)
+  - Try `createFromOptions`, `createFromModelPath`, and `createFromModelBuffer`
+  - Fresh `Uint8Array` copies (buffers can be detached after a failed attempt)
+  - Surface the **real underlying error** lines in the alert
+  - Add `.nojekyll` so Pages always serves binary assets as static files
+
 ## [0.2.4] — 2026-08-16
 
 ### Fixed
