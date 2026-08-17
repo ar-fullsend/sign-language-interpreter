@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.6] — 2026-08-17
+
+### Changed (mobile UX)
+- **Detection HUD** overlaid on the camera: large letter/word, confidence, hold meter, spelling + words
+- **Sticky mobile dock** under the video so “Seeing now” stays on screen while scrolling
+- Quick Space / ⌫ / Speak on the dock
+- Gesture guide collapsed by default; guides moved below translation
+- Portrait camera framing on phones
+
 ## [0.2.5] — 2026-08-16
 
 ### Fixed

@@ -28,6 +28,23 @@ const statLetters = document.getElementById("stat-letters");
 const statWords = document.getElementById("stat-words");
 const statDict = document.getElementById("stat-dict");
 
+// Mobile / overlay mirrors of live detection
+const hudPrediction = document.getElementById("hud-prediction");
+const hudConfidence = document.getElementById("hud-confidence");
+const hudHoldFill = document.getElementById("hud-hold-fill");
+const hudSpelling = document.getElementById("hud-spelling");
+const hudSentence = document.getElementById("hud-sentence");
+const hudPct = document.getElementById("hud-pct");
+const hudKicker = document.getElementById("hud-kicker");
+const dockPrediction = document.getElementById("dock-prediction");
+const dockConfidence = document.getElementById("dock-confidence");
+const dockHoldFill = document.getElementById("dock-hold-fill");
+const dockSpelling = document.getElementById("dock-spelling");
+const dockSentence = document.getElementById("dock-sentence");
+const dockSpace = document.getElementById("dock-space");
+const dockBackspace = document.getElementById("dock-backspace");
+const dockSpeak = document.getElementById("dock-speak");
+
 const btnStart = document.getElementById("btn-start");
 const btnStop = document.getElementById("btn-stop");
 const btnSwitch = document.getElementById("btn-switch");
@@ -1109,6 +1126,52 @@ function updateComposeUI() {
   btnBackspace.disabled = !running || spelling.length === 0;
   btnClearText.disabled = !hasText;
   btnSpeak.disabled = !hasText;
+
+  // Mirror to camera HUD + mobile dock (plain text, easy to read)
+  const spellText = spelling.length ? spelling : "—";
+  const sentenceText = words.length ? words.map((w) => w.text).join(" ") : "—";
+  if (hudSpelling) hudSpelling.textContent = spellText;
+  if (hudSentence) hudSentence.textContent = sentenceText;
+  if (dockSpelling) dockSpelling.textContent = spellText;
+  if (dockSentence) dockSentence.textContent = sentenceText;
+  if (dockSpace) dockSpace.disabled = !running || spelling.length === 0;
+  if (dockBackspace) dockBackspace.disabled = !running || spelling.length === 0;
+  if (dockSpeak) dockSpeak.disabled = !hasText;
+}
+
+/** Keep camera HUD, mobile dock, and desktop card in sync. */
+function setHoldProgress(pct) {
+  const w = `${Math.max(0, Math.min(100, pct))}%`;
+  if (holdFill) holdFill.style.width = w;
+  if (hudHoldFill) hudHoldFill.style.width = w;
+  if (dockHoldFill) dockHoldFill.style.width = w;
+  const locking = pct > 2 && pct < 100;
+  if (hudPrediction) hudPrediction.classList.toggle("is-locking", locking);
+  if (dockPrediction) dockPrediction.classList.toggle("is-locking", locking);
+}
+
+function setLiveDisplays({ label, meta, isWord, pctText }) {
+  if (predictionEl) {
+    predictionEl.textContent = label;
+    predictionEl.classList.toggle("is-word", !!isWord);
+  }
+  if (confidenceEl) confidenceEl.textContent = meta;
+
+  if (hudPrediction) {
+    hudPrediction.textContent = label;
+    hudPrediction.classList.toggle("is-word", !!isWord);
+  }
+  if (hudConfidence) hudConfidence.textContent = meta;
+  if (hudPct) hudPct.textContent = pctText || "";
+  if (hudKicker) {
+    hudKicker.textContent = isWord ? "Word gesture" : "Seeing now";
+  }
+
+  if (dockPrediction) {
+    dockPrediction.textContent = label;
+    dockPrediction.classList.toggle("is-word", !!isWord);
+  }
+  if (dockConfidence) dockConfidence.textContent = meta;
 }
 
 function isDictionaryWord(text) {
@@ -1287,26 +1350,33 @@ function flashStatus(msg) {
 function showLive(pred) {
   currentPrediction = pred;
   if (!pred) {
-    predictionEl.textContent = handVisible ? "…" : "—";
-    confidenceEl.textContent = handVisible
-      ? "Reading hand… try THANK YOU (chin→out) or ILY"
-      : "Show your hand";
-    holdFill.style.width = "0%";
-    predictionEl.classList.remove("is-word");
+    const meta = handVisible
+      ? "Reading hand… try THANK YOU or ILY"
+      : "Show your hand to the camera";
+    setLiveDisplays({
+      label: handVisible ? "…" : "—",
+      meta,
+      isWord: false,
+      pctText: ""
+    });
+    setHoldProgress(0);
     return;
   }
-  predictionEl.textContent = pred.label;
-  predictionEl.classList.toggle("is-word", pred.kind === "word" || pred.label.length > 1);
+  const isWord = pred.kind === "word" || pred.label.length > 1;
   let src = "letter";
   if (pred.source === "trained") src = "custom";
   else if (pred.kind === "word" || pred.source === "gesture") src = "word gesture";
   else if (pred.kind === "space") src = "space";
-  else src = "letter";
   let meta = `${Math.round(pred.confidence * 100)}% · ${src}`;
   if (pred.fireOnce) meta += " · motion";
   if (pred.alt && pred.alt !== pred.label) meta += ` · vs ${pred.alt}`;
   if (pred.pending && pred.pending !== pred.label) meta += ` · checking ${pred.pending}`;
-  confidenceEl.textContent = meta;
+  setLiveDisplays({
+    label: pred.label,
+    meta,
+    isWord,
+    pctText: `${Math.round(pred.confidence * 100)}%`
+  });
 }
 
 /**
@@ -1335,7 +1405,7 @@ function resetHold() {
   holdLabel = null;
   holdStartedAt = 0;
   spaceHoldStartedAt = 0;
-  holdFill.style.width = "0%";
+  setHoldProgress(0);
 }
 
 function applyCaptureMode(mode, { silent = false } = {}) {
@@ -1395,7 +1465,7 @@ function processHold(pred) {
 
     // Motion-complete signs (THANK YOU, HELLO, YES, NO, BYE) fire once
     if (pred.fireOnce && pred.confidence >= 0.78) {
-      holdFill.style.width = "100%";
+      setHoldProgress(100);
       commitWholeWordGesture(label, pred.confidence, { how: "motion sign" });
       return;
     }
@@ -1419,20 +1489,26 @@ function processHold(pred) {
     holdLabel = null;
     holdStartedAt = 0;
     if (spelling.length === 0) {
-      holdFill.style.width = "0%";
-      confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · open hand · move chin→out for THANK YOU`;
+      setHoldProgress(0);
+      const meta = `${Math.round(pred.confidence * 100)}% · open hand · move chin→out for THANK YOU`;
+      if (confidenceEl) confidenceEl.textContent = meta;
+      if (hudConfidence) hudConfidence.textContent = meta;
+      if (dockConfidence) dockConfidence.textContent = meta;
       return;
     }
     if (!spaceHoldStartedAt) spaceHoldStartedAt = now;
     const p = Math.min(1, (now - spaceHoldStartedAt) / SPACE_HOLD_MS);
-    holdFill.style.width = `${p * 100}%`;
-    confidenceEl.textContent = `Space ${Math.round(p * 100)}% · hold open hand`;
+    setHoldProgress(p * 100);
+    const meta = `Space ${Math.round(p * 100)}% · hold open hand`;
+    if (confidenceEl) confidenceEl.textContent = meta;
+    if (hudConfidence) hudConfidence.textContent = meta;
+    if (dockConfidence) dockConfidence.textContent = meta;
     if (p >= 1) {
       finalizeWord("open hand");
       spaceHoldStartedAt = 0;
       lastCommittedLabel = "__SPACE__";
       lastCommitAt = now;
-      holdFill.style.width = "0%";
+      setHoldProgress(0);
     }
     return;
   }
@@ -1442,7 +1518,10 @@ function processHold(pred) {
   // Don't lock weak / ambiguous reads
   if (pred.confidence < LOCK_MIN_CONF) {
     resetHold();
-    confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · hold clearer pose to lock`;
+    const meta = `${Math.round(pred.confidence * 100)}% · hold clearer pose to lock`;
+    if (confidenceEl) confidenceEl.textContent = meta;
+    if (hudConfidence) hudConfidence.textContent = meta;
+    if (dockConfidence) dockConfidence.textContent = meta;
     return;
   }
 
@@ -1465,13 +1544,16 @@ function processHold(pred) {
   }
 
   // Numbers / other — show only
-  holdFill.style.width = "0%";
+  setHoldProgress(0);
 }
 
 function tickHold(label, pred, now, onDone, holdMs = HOLD_MS) {
   if (label === lastCommittedLabel && now - lastCommitAt < COOLDOWN_MS) {
-    holdFill.style.width = "0%";
-    confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · ready for next sign`;
+    setHoldProgress(0);
+    const meta = `${Math.round(pred.confidence * 100)}% · ready for next sign`;
+    if (confidenceEl) confidenceEl.textContent = meta;
+    if (hudConfidence) hudConfidence.textContent = meta;
+    if (dockConfidence) dockConfidence.textContent = meta;
     return;
   }
 
@@ -1481,10 +1563,13 @@ function tickHold(label, pred, now, onDone, holdMs = HOLD_MS) {
   }
 
   const p = Math.min(1, (now - holdStartedAt) / holdMs);
-  holdFill.style.width = `${p * 100}%`;
+  setHoldProgress(p * 100);
   if (p < 1) {
     const kind = pred.kind === "word" ? "word" : "letter";
-    confidenceEl.textContent = `${Math.round(pred.confidence * 100)}% · locking ${kind} ${Math.round(p * 100)}%`;
+    const meta = `${Math.round(pred.confidence * 100)}% · locking ${kind} ${Math.round(p * 100)}%`;
+    if (confidenceEl) confidenceEl.textContent = meta;
+    if (hudConfidence) hudConfidence.textContent = meta;
+    if (dockConfidence) dockConfidence.textContent = meta;
   } else {
     onDone();
   }
@@ -1858,6 +1943,10 @@ btnClearText.addEventListener("click", clearText);
 btnClearLog.addEventListener("click", clearLog);
 btnAdd.addEventListener("click", addSample);
 btnClear.addEventListener("click", clearSamples);
+
+if (dockSpace) dockSpace.addEventListener("click", () => finalizeWord("space button"));
+if (dockBackspace) dockBackspace.addEventListener("click", backspaceLetter);
+if (dockSpeak) dockSpeak.addEventListener("click", speakSentence);
 
 btnSpeedNovice.addEventListener("click", () => applyCaptureMode("novice"));
 btnSpeedExpert.addEventListener("click", () => applyCaptureMode("expert"));
