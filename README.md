@@ -13,15 +13,14 @@ Point a camera at your hand. MediaPipe tracks 21 landmarks. An on-device scorer 
 ### Live recognition
 - Real-time **hand landmark** tracking (MediaPipe Hand Landmarker)
 - **Built-in ASL letter detector** — works with **zero training**
-- Continuous finger features + **scored templates** (not brittle first-match rules)
-- **Similar-sign disambiguation** for hard clusters:
-  - Fist family: **A · E · S · T · M · N**
+- **High-recall priority rules** for common letters first (**A, L, V, Y, B, 5, I, W…**)
+- Light disambiguation for look-alikes:
+  - Fist: **A · E · S · T · M · N** (A is default fist + thumb out)
   - Two-finger: **U · V · H · R · K**
-  - Circle: **O · C**
+  - Circle: **O · C** (O only when a clear ring — won’t steal A)
   - Open hand: **B · 5**
-  - Index family: **D · G · 1 · X**
-- Temporal **hysteresis** so similar letters don’t flicker frame-to-frame
-- Margin gate: ambiguous pairs lower confidence instead of locking the wrong letter
+  - Index: **D · G · 1**
+- Short **hysteresis** (1–2 frames) so letters switch quickly without thrashing
 - GPU MediaPipe with **automatic CPU fallback** (Surface / ARM friendly)
 
 ### Spelling → words
@@ -58,7 +57,15 @@ Toggle lives in the top bar; preference is saved in `localStorage`.
 
 ---
 
-## Quick start
+## Live demo (GitHub Pages)
+
+Once Pages is enabled on this repo (`Settings → Pages → Deploy from branch → main / root`):
+
+**https://ar-fullsend.github.io/sign-language-interpreter/**
+
+That URL serves `index.html` as the site landing page (HTTPS, so camera works).
+
+## Quick start (local)
 
 ```bash
 git clone https://github.com/ar-fullsend/sign-language-interpreter.git
@@ -110,16 +117,11 @@ Webcam frame
     ↓
 MediaPipe Hand Landmarker  →  21 landmarks (x, y, z)
     ↓
-Feature extraction
-  · continuous finger extension 0–1
-  · thumb placement (beside / over / between / under)
-  · spreads, circle metrics, index direction
+Finger up / thumb out (rotation-tolerant geometry)
     ↓
-Score all letter templates
+Priority rules (common letters: A, L, V, Y, B, 5, …)
     ↓
-Confusion-group disambiguation + margin gate
-    ↓
-Temporal hysteresis (sticky vs challenger)
+Light disambiguation for confusable pairs + short hysteresis
     ↓
 Live UI  ·  hold-to-lock spelling  ·  word finalize  ·  activity log
     ↓
@@ -133,7 +135,7 @@ Optional: TensorFlow.js KNN (custom trained labels override when present)
 | Layer | Technology |
 |-------|------------|
 | Hand tracking | [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker) (Hand Landmarker) |
-| Built-in letters | Geometry features + multi-template scoring (vanilla JS) |
+| Built-in letters | Geometry rules + light similar-sign disambiguation (vanilla JS) |
 | Custom signs | TensorFlow.js + `@tensorflow-models/knn-classifier` |
 | Camera | `navigator.mediaDevices.getUserMedia` |
 | Speech | Web Speech API (`speechSynthesis`) |
@@ -176,14 +178,25 @@ Dictionary and phrase lists live near the top of `app.js` (`DICTIONARY`, `PHRASE
 
 ---
 
+## Deploying to GitHub Pages
+
+1. Push `main` with `index.html` at the repo root (already the case).
+2. Repo **Settings → Pages → Build and deployment**
+   - Source: **Deploy from a branch**
+   - Branch: **main** / folder **/** (root)
+3. After ~1 minute, open  
+   `https://ar-fullsend.github.io/sign-language-interpreter/`
+4. Optional: repo **About → Website** → paste that URL so it shows on the repo home page.
+
+Every `git push` to `main` republishes the site.
+
 ## Extending
 
-- Swap geometry scoring for a trained TF.js LayersModel on landmark sequences
+- Swap geometry rules for a trained TF.js LayersModel on landmark sequences
 - Add motion letters **J** / **Z** with short trajectory buffers
 - Dual-hand + full-body pose for conversational ASL (not only fingerspelling)
 - Export / import KNN samples as JSON
 - Ship as a PWA (service worker + install prompt)
-- Host on **GitHub Pages** (Settings → Pages → deploy from `main`)
 
 ---
 

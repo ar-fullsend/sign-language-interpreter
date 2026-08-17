@@ -68,7 +68,7 @@ const CAPTURE_MODES = {
     cooldownMs: 550,
     wordGapMs: 1300,
     spaceHoldMs: 850,
-    lockMinConf: 0.72,
+    lockMinConf: 0.65,
     label: "Novice",
     hint: "Hold a letter ~1.0s to lock it"
   },
@@ -78,7 +78,7 @@ const CAPTURE_MODES = {
     cooldownMs: 220,
     wordGapMs: 700,
     spaceHoldMs: 400,
-    lockMinConf: 0.68,
+    lockMinConf: 0.6,
     label: "Expert",
     hint: "Hold a letter ~0.35s to lock it"
   }
@@ -260,9 +260,9 @@ function updateSampleCount() {
   if (btnClear) btnClear.disabled = sampleCount === 0;
 }
 
-// ── Geometry + polished similar-sign ML ───────
-// Continuous finger features + scored templates + confusion-group
-// disambiguation + temporal hysteresis (reduces A/S/E, U/V/R, O/C flicker).
+// ── ASL letter recognition (reliable + light disambiguation) ──
+// Priority rules for common signs, continuous features for close pairs,
+// short hysteresis so letters switch quickly but don't thrash.
 
 function dist2(a, b) {
   const dx = a.x - b.x;
@@ -274,21 +274,9 @@ function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
 
-/** Map value in [lo,hi] → 0..1 (clamped). */
-function normRange(v, lo, hi) {
-  if (hi <= lo) return 0;
-  return clamp01((v - lo) / (hi - lo));
-}
-
-/** Soft peak score: 1 at ideal, falls off toward lo/hi edges. */
-function peakScore(v, ideal, tol) {
-  return clamp01(1 - Math.abs(v - ideal) / tol);
-}
-
-// Temporal hysteresis state for similar-sign stability
+// Light temporal memory (2 frames for most switches)
 let stickyLabel = null;
 let stickyKind = "letter";
-let stickyScore = 0;
 let stickyFrames = 0;
 let challengerLabel = null;
 let challengerFrames = 0;
@@ -296,688 +284,303 @@ let challengerFrames = 0;
 function resetRecognitionMemory() {
   stickyLabel = null;
   stickyKind = "letter";
-  stickyScore = 0;
   stickyFrames = 0;
   challengerLabel = null;
   challengerFrames = 0;
 }
 
 /**
- * Continuous 0..1 extension: tip vs PIP distance from wrist.
- * ~0 fist curl, ~1 fully extended.
+ * Finger extended? Tip farther from wrist than PIP (rotation-tolerant).
+ * Also requires tip reasonably past PIP along the finger chain.
  */
-function fingerExtension(lm, tipIdx, pipIdx, scale) {
+function isFingerUp(lm, tipIdx, pipIdx, mcpIdx) {
   const wrist = lm[0];
   const tip = lm[tipIdx];
   const pip = lm[pipIdx];
-  const tipD = dist2(tip, wrist) / scale;
-  const pipD = dist2(pip, wrist) / scale;
-  // Ratio tip/pip: extended ~1.25+, curled ~0.85-
-  const ratio = tipD / (pipD + 1e-6);
-  return clamp01((ratio - 0.85) / 0.5);
+  const mcp = lm[mcpIdx];
+  const tipW = dist2(tip, wrist);
+  const pipW = dist2(pip, wrist);
+  const tipM = dist2(tip, mcp);
+  const pipM = dist2(pip, mcp);
+  // Forgiving thresholds so common poses register as "up"
+  return tipW > pipW * 1.05 && tipM > pipM * 1.05;
 }
 
 /**
- * Extract rich features for disambiguating similar ASL letters.
+ * Thumb "out" (A, L, Y, 5) vs tucked (B, E, S).
+ * Compares tip distance from palm center vs IP joint.
  */
-function extractHandFeatures(lm) {
-  const wrist = lm[0];
-  const scale = dist2(wrist, lm[9]) || 1e-6;
-  const n = (a, b) => dist2(a, b) / scale;
-
-  const thumbTip = lm[4];
-  const thumbIp = lm[3];
-  const thumbMcp = lm[2];
-  const indexTip = lm[8];
-  const middleTip = lm[12];
-  const ringTip = lm[16];
-  const pinkyTip = lm[20];
+function isThumbOut(lm) {
+  const tip = lm[4];
+  const ip = lm[3];
   const indexMcp = lm[5];
-  const middleMcp = lm[9];
-  const ringMcp = lm[13];
   const pinkyMcp = lm[17];
-  const indexPip = lm[6];
-  const middlePip = lm[10];
-  const ringPip = lm[14];
-  const pinkyPip = lm[18];
-
   const palm = {
-    x: (indexMcp.x + pinkyMcp.x) / 2,
-    y: (indexMcp.y + pinkyMcp.y) / 2
+    x: (indexMcp.x + pinkyMcp.x) * 0.5,
+    y: (indexMcp.y + pinkyMcp.y) * 0.5
   };
-
-  const index = fingerExtension(lm, 8, 6, scale);
-  const middle = fingerExtension(lm, 12, 10, scale);
-  const ring = fingerExtension(lm, 16, 14, scale);
-  const pinky = fingerExtension(lm, 20, 18, scale);
-
-  // Thumb: openness away from palm + how high vs fist
-  const thumbOpen = clamp01((n(thumbTip, palm) - n(thumbIp, palm) + 0.15) / 0.55);
-  const thumbBeside = clamp01(1 - n(thumbTip, indexMcp) / 0.55); // near index MCP = A-like
-  const thumbOverFingers = clamp01(1 - n(thumbTip, indexPip) / 0.4); // S-like
-  const thumbBetweenIM = clamp01(
-    1 - Math.min(n(thumbTip, indexPip), n(thumbTip, middlePip)) / 0.38
-  ); // T-like
-  const thumbUnder3 = clamp01(1 - n(thumbTip, ringPip) / 0.45); // M-ish
-  const thumbUnder2 = clamp01(1 - n(thumbTip, middlePip) / 0.42); // N-ish
-
-  const indexMiddleSpread = n(indexTip, middleTip);
-  const middleRingSpread = n(middleTip, ringTip);
-  const ringPinkySpread = n(ringTip, pinkyTip);
-  const thumbIndexSpread = n(thumbTip, indexTip);
-  const thumbMiddleDist = n(thumbTip, middleTip);
-  const thumbIndexDist = n(thumbTip, indexTip);
-
-  // Circle metrics (O vs C vs fist)
-  const tips = [indexTip, middleTip, ringTip, pinkyTip];
-  const tipToThumb = tips.map((t) => n(t, thumbTip));
-  const circleAvg = tipToThumb.reduce((a, b) => a + b, 0) / 4;
-  const circleMax = Math.max(...tipToThumb);
-  const circleMin = Math.min(...tipToThumb);
-  const circleVar = circleMax - circleMin;
-  const tipCluster =
-    (n(indexTip, middleTip) + n(middleTip, ringTip) + n(ringTip, pinkyTip)) / 3;
-  const tipFromMcp =
-    (n(indexTip, indexMcp) + n(middleTip, middleMcp) + n(ringTip, ringMcp) + n(pinkyTip, pinkyMcp)) /
-    4;
-
-  // Index direction (D upright vs G sideways)
-  const indexDx = Math.abs(indexTip.x - indexMcp.x);
-  const indexDy = Math.abs(indexTip.y - indexMcp.y);
-  const indexHorizontal = indexDx / (indexDx + indexDy + 1e-6);
-
-  // Hook for X: index partially extended
-  const indexHook = index > 0.25 && index < 0.65 && middle < 0.35;
-
-  const meanExt = (index + middle + ring + pinky) / 4;
-  const extBits = {
-    index: index > 0.55,
-    middle: middle > 0.55,
-    ring: ring > 0.55,
-    pinky: pinky > 0.55,
-    thumb: thumbOpen > 0.45
-  };
-  const extCount = [extBits.index, extBits.middle, extBits.ring, extBits.pinky].filter(
-    Boolean
-  ).length;
-
-  return {
-    scale,
-    n,
-    index,
-    middle,
-    ring,
-    pinky,
-    thumbOpen,
-    thumbBeside,
-    thumbOverFingers,
-    thumbBetweenIM,
-    thumbUnder3,
-    thumbUnder2,
-    indexMiddleSpread,
-    middleRingSpread,
-    ringPinkySpread,
-    thumbIndexSpread,
-    thumbMiddleDist,
-    thumbIndexDist,
-    circleAvg,
-    circleMax,
-    circleMin,
-    circleVar,
-    tipCluster,
-    tipFromMcp,
-    indexHorizontal,
-    indexHook,
-    meanExt,
-    extBits,
-    extCount,
-    lm,
-    thumbTip,
-    indexTip,
-    middleTip,
-    ringTip,
-    pinkyTip,
-    indexMcp,
-    middleMcp,
-    indexPip,
-    middlePip,
-    ringPip,
-    pinkyPip
-  };
+  // Thumb out if tip is meaningfully farther from palm than IP
+  return dist2(tip, palm) > dist2(ip, palm) * 1.08;
 }
 
-/**
- * Score how well continuous finger extensions match a target pattern.
- * pattern: { index, middle, ring, pinky, thumb } each 0..1 ideal, weight optional.
- */
-function scoreFingerPattern(feat, pattern, tol = 0.45) {
-  const keys = ["index", "middle", "ring", "pinky"];
-  let sum = 0;
-  let wsum = 0;
-  for (const k of keys) {
-    if (pattern[k] === undefined) continue;
-    const w = pattern.w?.[k] ?? 1;
-    sum += w * peakScore(feat[k], pattern[k], tol);
-    wsum += w;
-  }
-  if (pattern.thumb !== undefined) {
-    const w = pattern.w?.thumb ?? 1.1;
-    sum += w * peakScore(feat.thumbOpen, pattern.thumb, tol);
-    wsum += w;
-  }
-  return wsum ? sum / wsum : 0;
+/** Thumb near index MCP (classic A position). */
+function thumbBesideFist(lm, scale) {
+  return dist2(lm[4], lm[5]) / scale < 0.55;
+}
+
+/** Thumb tip over closed fingers (S-ish). */
+function thumbOverFist(lm, scale) {
+  return dist2(lm[4], lm[6]) / scale < 0.38;
 }
 
 function kindForLabel(label) {
-  if (label === "5" || label === "OPEN") return "space";
-  if (label === "1" || label === "3" || label === "4") return "number";
+  if (label === "5") return "space";
+  if (label === "1" || label === "3") return "number";
   return "letter";
 }
 
 /**
- * Score every letter; return ranked list. Heavy focus on similar-sign separation.
+ * Core recognizer: ordered rules for high-recall common letters,
+ * then disambiguation within confusable groups.
  */
-function scoreAllLetters(feat) {
-  /** @type {{ label: string, score: number }[]} */
-  const scores = [];
+function recognizeAsl(lm) {
+  const wrist = lm[0];
+  const scale = dist2(wrist, lm[9]) || 1e-6;
+  const n = (i, j) => dist2(lm[i], lm[j]) / scale;
 
-  const add = (label, score) => {
-    if (score > 0.15) scores.push({ label, score: clamp01(score) });
+  const thumb = isThumbOut(lm);
+  const index = isFingerUp(lm, 8, 6, 5);
+  const middle = isFingerUp(lm, 12, 10, 9);
+  const ring = isFingerUp(lm, 16, 14, 13);
+  const pinky = isFingerUp(lm, 20, 18, 17);
+
+  const imSpread = n(8, 12);
+  const thumbIndex = n(4, 8);
+  const thumbMiddle = n(4, 12);
+  const tipFromMcp =
+    (n(8, 5) + n(12, 9) + n(16, 13) + n(20, 17)) / 4;
+  const circleAvg = (n(8, 4) + n(12, 4) + n(16, 4) + n(20, 4)) / 4;
+
+  const indexDx = Math.abs(lm[8].x - lm[5].x);
+  const indexDy = Math.abs(lm[8].y - lm[5].y);
+  const indexHoriz = indexDx > indexDy * 1.15;
+
+  /** @type {{ label: string, confidence: number, kind?: string } | null} */
+  let best = null;
+  const set = (label, confidence, kind) => {
+    const k = kind || kindForLabel(label);
+    if (!best || confidence > best.confidence) {
+      best = { label, confidence, kind: k };
+    }
   };
 
-  // ── Distinctive / easy shapes ─────────────────
-  // Y: thumb+pinky up, others down
-  add(
-    "Y",
-    scoreFingerPattern(feat, { index: 0, middle: 0, ring: 0, pinky: 1, thumb: 1 }, 0.4) *
-      (feat.pinky > 0.55 && feat.index < 0.4 ? 1 : 0.5)
-  );
+  // ═══════════════════════════════════════════
+  // 1) Distinctive high-priority shapes (common)
+  // ═══════════════════════════════════════════
 
-  // I: pinky only
-  add(
-    "I",
-    scoreFingerPattern(feat, { index: 0, middle: 0, ring: 0, pinky: 1, thumb: 0.2 }, 0.4) *
-      (feat.pinky > 0.55 && feat.index < 0.35 && feat.middle < 0.35 ? 1.05 : 0.45)
-  );
-
-  // L: index + thumb, wide angle
-  {
-    let s = scoreFingerPattern(feat, { index: 1, middle: 0, ring: 0, pinky: 0, thumb: 1 }, 0.4);
-    s *= peakScore(feat.thumbIndexSpread, 0.75, 0.4);
-    s *= feat.index > 0.55 && feat.middle < 0.4 ? 1 : 0.4;
-    add("L", s);
+  // Y — shaka
+  if (thumb && pinky && !index && !middle && !ring) {
+    set("Y", 0.94);
   }
 
-  // ── Two-finger family: U V H R K (hard cluster) ─
-  if (feat.index > 0.45 && feat.middle > 0.45 && feat.ring < 0.5 && feat.pinky < 0.5) {
-    const spread = feat.indexMiddleSpread;
-    // V: clear spread
-    add(
-      "V",
-      scoreFingerPattern(feat, { index: 1, middle: 1, ring: 0, pinky: 0, thumb: 0.25 }, 0.4) *
-        peakScore(spread, 0.5, 0.28) *
-        (spread >= 0.32 ? 1.08 : 0.55)
-    );
-    // U: together, thumb in
-    add(
-      "U",
-      scoreFingerPattern(feat, { index: 1, middle: 1, ring: 0, pinky: 0, thumb: 0.15 }, 0.4) *
-        peakScore(spread, 0.18, 0.2) *
-        (spread < 0.3 && feat.thumbOpen < 0.45 ? 1.1 : 0.5)
-    );
-    // H: like U but often more horizontal / thumb out a bit — treat as U-sideways proxy
-    add(
-      "H",
-      scoreFingerPattern(feat, { index: 1, middle: 1, ring: 0, pinky: 0, thumb: 0.55 }, 0.45) *
-        peakScore(spread, 0.2, 0.22) *
-        (feat.thumbOpen > 0.4 && spread < 0.32 ? 1.05 : 0.45)
-    );
-    // R: tips very close / crossed
-    add(
-      "R",
-      scoreFingerPattern(feat, { index: 0.9, middle: 0.9, ring: 0, pinky: 0, thumb: 0.2 }, 0.45) *
-        peakScore(spread, 0.12, 0.15) *
-        (spread < 0.22 ? 1.05 : 0.4)
-    );
-    // K: V-ish with thumb between (touching middle)
-    add(
-      "K",
-      scoreFingerPattern(feat, { index: 1, middle: 1, ring: 0, pinky: 0, thumb: 0.7 }, 0.45) *
-        peakScore(spread, 0.35, 0.25) *
-        peakScore(feat.thumbMiddleDist, 0.28, 0.25) *
-        (feat.thumbOpen > 0.4 && spread > 0.22 && spread < 0.55 ? 1.05 : 0.45)
-    );
+  // I — pinky only
+  if (pinky && !index && !middle && !ring) {
+    set("I", thumb ? 0.82 : 0.93);
   }
 
-  // W / 3
-  if (feat.index > 0.5 && feat.middle > 0.5 && feat.ring > 0.5 && feat.pinky < 0.45) {
-    if (feat.thumbOpen > 0.4) {
-      add("W", scoreFingerPattern(feat, { index: 1, middle: 1, ring: 1, pinky: 0, thumb: 0.7 }, 0.4));
+  // L — index + thumb, others down, wide angle
+  if (index && thumb && !middle && !ring && !pinky && thumbIndex > 0.4) {
+    set("L", 0.93);
+  }
+
+  // V / U / H / R / K — index+middle up
+  if (index && middle && !ring && !pinky) {
+    if (imSpread >= 0.3) {
+      // Spread → V (or K if thumb clearly between)
+      if (thumb && thumbMiddle < 0.4 && imSpread < 0.55) set("K", 0.8);
+      else set("V", 0.93);
+    } else if (imSpread < 0.22) {
+      // Together → U / H / R
+      if (imSpread < 0.14) set("R", 0.78);
+      else if (thumb) set("H", 0.84);
+      else set("U", 0.9);
     } else {
-      add("3", scoreFingerPattern(feat, { index: 1, middle: 1, ring: 1, pinky: 0, thumb: 0.15 }, 0.4));
+      // Mid spread
+      if (thumb && thumbMiddle < 0.42) set("K", 0.78);
+      else set("V", 0.82);
     }
   }
 
-  // F: OK circle + 3 up
-  {
-    let s = scoreFingerPattern(feat, { index: 0.15, middle: 1, ring: 1, pinky: 1, thumb: 0.6 }, 0.4);
-    s *= peakScore(feat.thumbIndexDist, 0.18, 0.22);
-    s *= feat.middle > 0.55 && feat.ring > 0.55 && feat.pinky > 0.5 ? 1.05 : 0.4;
-    add("F", s);
+  // W / 3 — three fingers
+  if (index && middle && ring && !pinky) {
+    set(thumb ? "W" : "3", thumb ? 0.9 : 0.86);
   }
 
-  // B vs 5 (open hand family)
-  {
-    const openFingers = scoreFingerPattern(
-      feat,
-      { index: 1, middle: 1, ring: 1, pinky: 1 },
-      0.38
-    );
-    add("B", openFingers * peakScore(feat.thumbOpen, 0.15, 0.35) * (feat.thumbOpen < 0.4 ? 1.1 : 0.5));
-    add("5", openFingers * peakScore(feat.thumbOpen, 0.85, 0.35) * (feat.thumbOpen > 0.45 ? 1.1 : 0.5));
+  // F — OK: thumb~index tip, other three up
+  if (middle && ring && pinky && !index && thumbIndex < 0.4) {
+    set("F", 0.9);
   }
 
-  // ── Index-only family: D G X 1 ──
-  if (feat.index > 0.45 && feat.middle < 0.45 && feat.ring < 0.45 && feat.pinky < 0.45) {
-    const upright = 1 - feat.indexHorizontal;
-    add(
-      "1",
-      scoreFingerPattern(feat, { index: 1, middle: 0, ring: 0, pinky: 0, thumb: 0.1 }, 0.4) *
-        peakScore(feat.thumbOpen, 0.15, 0.35) *
-        upright
-    );
-    add(
-      "D",
-      scoreFingerPattern(feat, { index: 1, middle: 0, ring: 0, pinky: 0, thumb: 0.55 }, 0.4) *
-        upright *
-        (feat.thumbOpen > 0.35 ? 1.05 : 0.55) *
-        // D: thumb near middle finger curl
-        peakScore(Math.min(feat.thumbMiddleDist, feat.n(feat.thumbTip, feat.middlePip)), 0.25, 0.3)
-    );
-    add(
-      "G",
-      scoreFingerPattern(feat, { index: 1, middle: 0, ring: 0, pinky: 0, thumb: 0.7 }, 0.45) *
-        peakScore(feat.indexHorizontal, 0.75, 0.35) *
-        (feat.indexHorizontal > 0.55 ? 1.1 : 0.45)
-    );
-    if (feat.indexHook) {
-      add(
-        "X",
-        scoreFingerPattern(feat, { index: 0.45, middle: 0, ring: 0, pinky: 0, thumb: 0.3 }, 0.4) * 0.95
-      );
+  // B — four up, thumb in
+  if (index && middle && ring && pinky && !thumb) {
+    set("B", 0.92);
+  }
+
+  // 5 — open hand (space)
+  if (index && middle && ring && pinky && thumb) {
+    set("5", 0.93);
+  }
+
+  // D / G / 1 — index only among four fingers
+  if (index && !middle && !ring && !pinky) {
+    // Don't steal L (already handled when thumb + wide)
+    if (!(thumb && thumbIndex > 0.4)) {
+      if (indexHoriz && thumb) set("G", 0.84);
+      else if (thumb) set("D", 0.88);
+      else set("1", 0.9);
     }
   }
 
-  // ── Circle family: O vs C (strict separation) ──
-  {
-    const curled =
-      feat.index < 0.45 && feat.middle < 0.45 && feat.ring < 0.45 && feat.pinky < 0.45;
-    if (curled) {
-      // O: tips form tight ring on thumb, mid extension from MCP (hole)
-      let o =
-        peakScore(feat.circleAvg, 0.22, 0.16) *
-        peakScore(feat.circleVar, 0.1, 0.15) *
-        peakScore(feat.tipFromMcp, 0.42, 0.2) *
-        peakScore(feat.tipCluster, 0.22, 0.18) *
-        (feat.circleMax < 0.4 ? 1.05 : 0.5) *
-        (feat.tipFromMcp > 0.28 ? 1.05 : 0.45);
-      // Penalize if looks like fist (tips too close to MCP)
-      if (feat.tipFromMcp < 0.25) o *= 0.35;
-      // Penalize if thumb is "beside fist" A-style more than circle
-      if (feat.thumbBeside > 0.7 && feat.circleAvg > 0.28) o *= 0.5;
-      add("O", o);
-
-      // C: larger open gap, still curved
-      let c =
-        peakScore(feat.thumbIndexDist, 0.65, 0.28) *
-        peakScore(feat.circleAvg, 0.55, 0.25) *
-        peakScore(feat.tipFromMcp, 0.45, 0.22) *
-        (feat.thumbIndexDist > 0.42 && feat.thumbIndexDist < 1.0 ? 1.05 : 0.4) *
-        (feat.thumbOpen > 0.35 ? 1 : 0.55);
-      // Must not be tight O
-      if (feat.circleAvg < 0.32) c *= 0.4;
-      add("C", c);
-    }
-  }
-
-  // ── Fist family: A E S T M N (hardest cluster) ──
-  if (feat.meanExt < 0.4 && feat.extCount === 0) {
-    const fistTight = peakScore(feat.tipFromMcp, 0.22, 0.2) * (feat.tipFromMcp < 0.4 ? 1 : 0.5);
-
-    // A: fist + thumb alongside (not over fingers)
-    add(
-      "A",
-      fistTight *
-        peakScore(feat.thumbOpen, 0.55, 0.35) *
-        peakScore(feat.thumbBeside, 0.75, 0.35) *
-        (1 - feat.thumbOverFingers * 0.7) *
-        (feat.thumbOpen > 0.35 ? 1.05 : 0.55)
-    );
-
-    // E: fist, thumb tucked, fingertips on thumb side
-    add(
-      "E",
-      fistTight *
-        peakScore(feat.thumbOpen, 0.15, 0.3) *
-        (1 - feat.thumbBeside * 0.5) *
-        peakScore(feat.circleAvg, 0.35, 0.25) *
-        (feat.thumbOpen < 0.4 ? 1.05 : 0.5)
-    );
-
-    // S: fist, thumb over closed fingers
-    add(
-      "S",
-      fistTight *
-        peakScore(feat.thumbOverFingers, 0.8, 0.35) *
-        peakScore(feat.thumbOpen, 0.25, 0.35) *
-        (feat.thumbOverFingers > 0.45 ? 1.1 : 0.5)
-    );
-
-    // T: thumb between index & middle
-    add(
-      "T",
-      fistTight *
-        peakScore(feat.thumbBetweenIM, 0.8, 0.3) *
-        peakScore(feat.thumbOpen, 0.35, 0.35) *
-        (feat.thumbBetweenIM > 0.5 ? 1.08 : 0.45)
-    );
-
-    // M: thumb under 3 fingers (toward pinky side)
-    add(
-      "M",
-      fistTight *
-        peakScore(feat.thumbUnder3, 0.75, 0.35) *
-        peakScore(feat.thumbOpen, 0.2, 0.3) *
-        (feat.thumbUnder3 > 0.5 && feat.thumbUnder3 >= feat.thumbUnder2 ? 1.05 : 0.45)
-    );
-
-    // N: thumb under 2 fingers
-    add(
-      "N",
-      fistTight *
-        peakScore(feat.thumbUnder2, 0.75, 0.35) *
-        peakScore(feat.thumbOpen, 0.2, 0.3) *
-        (feat.thumbUnder2 > 0.5 && feat.thumbUnder2 > feat.thumbUnder3 + 0.05 ? 1.05 : 0.45)
-    );
-  }
-
-  // Sort high → low
-  scores.sort((a, b) => b.score - a.score);
-  return scores;
-}
-
-/**
- * Within a confusion group, re-rank using specialized margins so similar
- * signs don't flip on noise.
- */
-function disambiguateSimilar(ranked, feat) {
-  if (!ranked.length) return ranked;
-
-  const by = Object.fromEntries(ranked.map((r) => [r.label, r.score]));
-  const bump = (label, delta) => {
-    if (by[label] === undefined) return;
-    by[label] = clamp01(by[label] + delta);
-  };
-
-  // Fist group: pick single winner with clearer thumb geometry
-  const fist = ["A", "E", "S", "T", "M", "N"];
-  const fistPresent = fist.filter((l) => by[l] !== undefined);
-  if (fistPresent.length >= 2 && feat.meanExt < 0.42) {
-    // Strong priors from thumb placement
-    if (feat.thumbOpen > 0.45 && feat.thumbBeside > 0.55 && feat.thumbOverFingers < 0.45) {
-      bump("A", 0.12);
-      bump("S", -0.1);
-      bump("E", -0.08);
-    } else if (feat.thumbOverFingers > 0.55) {
-      bump("S", 0.14);
-      bump("A", -0.1);
-      bump("T", -0.05);
-    } else if (feat.thumbBetweenIM > 0.55 && feat.thumbOpen < 0.5) {
-      bump("T", 0.14);
-      bump("A", -0.08);
-      bump("S", -0.06);
-    } else if (feat.thumbOpen < 0.35) {
-      bump("E", 0.1);
-      bump("A", -0.08);
-    }
-    if (feat.thumbUnder3 > feat.thumbUnder2 + 0.08 && feat.thumbOpen < 0.4) {
-      bump("M", 0.12);
-      bump("N", -0.06);
-    } else if (feat.thumbUnder2 > feat.thumbUnder3 + 0.05 && feat.thumbOpen < 0.4) {
-      bump("N", 0.12);
-      bump("M", -0.06);
-    }
-  }
-
-  // Two-finger: V vs U vs R vs K vs H
-  const two = ["V", "U", "R", "K", "H"];
-  if (two.some((l) => by[l] !== undefined)) {
-    const sp = feat.indexMiddleSpread;
-    if (sp >= 0.34) {
-      bump("V", 0.12);
-      bump("U", -0.12);
-      bump("R", -0.1);
-      bump("H", -0.08);
-    } else if (sp <= 0.2) {
-      bump("U", 0.08);
-      bump("R", sp < 0.15 ? 0.1 : 0.02);
-      bump("V", -0.14);
-      if (feat.thumbOpen > 0.45) {
-        bump("H", 0.08);
-        bump("U", -0.05);
+  // ═══════════════════════════════════════════
+  // 2) Fist family — A is the default fist+thumb
+  // ═══════════════════════════════════════════
+  if (!index && !middle && !ring && !pinky) {
+    // Prefer A whenever thumb is out beside a closed hand (most common)
+    if (thumb) {
+      if (thumbOverFist(lm, scale) && !thumbBesideFist(lm, scale)) {
+        set("S", 0.8);
+      } else if (n(4, 6) < 0.35 && n(4, 10) < 0.4 && tipFromMcp < 0.35) {
+        // T-ish: thumb jammed into fist top
+        set("T", 0.76);
+      } else {
+        // A: default fist + thumb out (high recall)
+        const conf = thumbBesideFist(lm, scale) ? 0.92 : 0.86;
+        set("A", conf);
+      }
+    } else {
+      // Thumb tucked
+      if (n(4, 14) < 0.4 || n(4, 10) < 0.38) {
+        // under fingers → M/N approx
+        set(n(4, 14) < n(4, 10) ? "M" : "N", 0.74);
+      } else {
+        set("E", 0.84);
       }
     }
-    if (feat.thumbOpen > 0.5 && sp > 0.22 && sp < 0.5 && feat.thumbMiddleDist < 0.4) {
-      bump("K", 0.12);
-      bump("V", -0.06);
+
+    // O only if clearly a ring (not a fist) — strict, low priority
+    if (
+      circleAvg < 0.34 &&
+      tipFromMcp > 0.3 &&
+      tipFromMcp < 0.55 &&
+      n(8, 12) < 0.35 &&
+      best &&
+      (best.label === "A" || best.label === "E" || best.label === "S")
+    ) {
+      // Only override fist if circle is strong
+      if (circleAvg < 0.28 && tipFromMcp > 0.32) {
+        set("O", 0.8);
+      }
     }
   }
 
-  // O vs C
-  if (by.O !== undefined || by.C !== undefined) {
-    if (feat.circleAvg < 0.3 && feat.tipFromMcp > 0.3) {
-      bump("O", 0.1);
-      bump("C", -0.15);
-    } else if (feat.thumbIndexDist > 0.48) {
-      bump("C", 0.12);
-      bump("O", -0.15);
-    }
-    // Fist-like → kill O/C
-    if (feat.tipFromMcp < 0.24) {
-      bump("O", -0.25);
-      bump("C", -0.15);
+  // ═══════════════════════════════════════════
+  // 3) C — open curve (not fist, not fully extended)
+  // ═══════════════════════════════════════════
+  if (!index && !middle && thumb && tipFromMcp > 0.28) {
+    if (thumbIndex > 0.45 && thumbIndex < 1.05 && circleAvg > 0.35 && circleAvg < 0.75) {
+      set("C", 0.8);
     }
   }
 
-  // B vs 5
-  if (by.B !== undefined || by["5"] !== undefined) {
-    if (feat.thumbOpen > 0.45) {
-      bump("5", 0.1);
-      bump("B", -0.12);
+  // ═══════════════════════════════════════════
+  // 4) Soft fallbacks so something always shows
+  // ═══════════════════════════════════════════
+  if (!best) {
+    const up = [index, middle, ring, pinky].filter(Boolean).length;
+    if (up === 0 && thumb) {
+      best = { label: "A", confidence: 0.72, kind: "letter" };
+    } else if (up >= 4) {
+      best = { label: thumb ? "5" : "B", confidence: 0.7, kind: thumb ? "space" : "letter" };
+    } else if (up === 1 && index) {
+      best = { label: thumb ? "D" : "1", confidence: 0.7, kind: thumb ? "letter" : "number" };
+    } else if (up === 2 && index && middle) {
+      best = { label: "V", confidence: 0.7, kind: "letter" };
     } else {
-      bump("B", 0.1);
-      bump("5", -0.12);
+      best = { label: "…", confidence: 0.35, kind: "unknown" };
     }
   }
 
-  // D vs G vs 1
-  if (by.D !== undefined || by.G !== undefined || by["1"] !== undefined) {
-    if (feat.indexHorizontal > 0.58) {
-      bump("G", 0.12);
-      bump("D", -0.1);
-      bump("1", -0.08);
-    } else if (feat.thumbOpen < 0.3) {
-      bump("1", 0.1);
-      bump("D", -0.08);
-    } else {
-      bump("D", 0.08);
-      bump("1", -0.06);
-    }
-  }
+  // Light hysteresis: only for confusable pairs, 2 frames
+  const stable = applyLightHysteresis(best.label, best.confidence, best.kind);
 
-  // Rebuild ranked
-  return Object.entries(by)
-    .map(([label, score]) => ({ label, score }))
-    .sort((a, b) => b.score - a.score);
+  return {
+    label: stable.label,
+    confidence: clamp01(stable.confidence),
+    kind: stable.kind,
+    alt: stable.pending || null,
+    pending: stable.pending || null
+  };
 }
 
-/**
- * Require a clear margin between #1 and #2 for confusable pairs.
- */
-function applyMarginGate(ranked) {
-  if (ranked.length < 2) return ranked;
-  const confusable = new Set([
-    "A|S",
-    "A|E",
-    "A|T",
-    "S|T",
-    "S|E",
-    "E|T",
-    "M|N",
-    "U|V",
-    "U|R",
-    "V|K",
-    "U|H",
-    "O|C",
-    "O|E",
-    "B|5",
-    "D|1",
-    "D|G",
-    "W|3"
-  ]);
-  const a = ranked[0];
-  const b = ranked[1];
-  const pair = [a.label, b.label].sort().join("|");
-  const need = confusable.has(pair) ? 0.06 : 0.03;
-  if (a.score - b.score < need) {
-    // Ambiguous: keep leader but lower confidence so we don't lock
-    return [{ label: a.label, score: a.score * 0.85, ambiguous: true }, ...ranked.slice(1)];
-  }
-  return ranked;
-}
-
-/**
- * Temporal hysteresis: don't flip to a similar letter without sustained evidence.
- */
-function applyHysteresis(label, score, kind) {
-  const SIMILAR = {
-    A: ["E", "S", "T", "M", "N"],
-    E: ["A", "S", "T", "O"],
+function applyLightHysteresis(label, confidence, kind) {
+  const CONFUSABLE = {
+    A: ["E", "S", "T", "O"],
+    E: ["A", "S", "O"],
     S: ["A", "E", "T"],
-    T: ["A", "S", "N"],
-    M: ["N", "A", "S"],
-    N: ["M", "T", "S"],
-    U: ["V", "R", "H", "K"],
-    V: ["U", "K", "R"],
-    R: ["U", "V"],
-    K: ["V", "U"],
-    H: ["U", "V"],
-    O: ["C", "E", "A"],
-    C: ["O", "E"],
+    U: ["V", "R", "H"],
+    V: ["U", "K"],
+    O: ["C", "A", "E"],
+    C: ["O"],
     B: ["5"],
     "5": ["B"],
-    D: ["1", "G", "X"],
-    G: ["D", "1"],
-    "1": ["D", "G"],
-    W: ["3"],
-    "3": ["W"]
+    D: ["1", "G", "L"],
+    "1": ["D"]
   };
+
+  if (label === "…" || kind === "unknown") {
+    return { label, confidence, kind };
+  }
 
   if (!stickyLabel) {
     stickyLabel = label;
     stickyKind = kind;
-    stickyScore = score;
     stickyFrames = 1;
     challengerLabel = null;
     challengerFrames = 0;
-    return { label, score, kind };
+    return { label, confidence, kind };
   }
 
   if (label === stickyLabel) {
     stickyFrames += 1;
-    stickyScore = stickyScore * 0.7 + score * 0.3;
     challengerLabel = null;
     challengerFrames = 0;
-    return { label: stickyLabel, score: Math.max(stickyScore, score), kind: stickyKind };
+    return { label: stickyLabel, confidence, kind: stickyKind };
   }
 
-  const related = SIMILAR[stickyLabel] || [];
-  const isSimilar = related.includes(label);
-  // Need stronger / longer evidence to switch among similar signs
-  const needFrames = isSimilar ? 4 : 2;
-  const needMargin = isSimilar ? 0.08 : 0.04;
+  // Distinctive letters switch immediately (Y, L, I, V, 5, B, W…)
+  const confusable = (CONFUSABLE[stickyLabel] || []).includes(label);
+  const need = confusable ? 2 : 1;
 
-  if (label === challengerLabel) {
-    challengerFrames += 1;
-  } else {
+  if (label === challengerLabel) challengerFrames += 1;
+  else {
     challengerLabel = label;
     challengerFrames = 1;
   }
 
-  if (challengerFrames >= needFrames && score >= stickyScore + needMargin) {
+  if (challengerFrames >= need) {
     stickyLabel = label;
     stickyKind = kind;
-    stickyScore = score;
     stickyFrames = 1;
     challengerLabel = null;
     challengerFrames = 0;
-    return { label, score, kind };
+    return { label, confidence, kind };
   }
 
-  // Hold sticky prediction while challenger builds up
   return {
     label: stickyLabel,
-    score: stickyScore * 0.95,
+    confidence: confidence * 0.95,
     kind: stickyKind,
     pending: label
-  };
-}
-
-/**
- * Main recognizer entry: features → scores → disambiguate → margin → hysteresis.
- */
-function recognizeAsl(lm) {
-  const feat = extractHandFeatures(lm);
-  let ranked = scoreAllLetters(feat);
-  ranked = disambiguateSimilar(ranked, feat);
-  ranked = applyMarginGate(ranked);
-
-  if (!ranked.length || ranked[0].score < 0.38) {
-    // Don't immediately clear sticky on one weak frame
-    if (stickyLabel && stickyFrames > 2) {
-      stickyFrames -= 1;
-      return {
-        label: stickyLabel,
-        confidence: Math.max(0.4, stickyScore * 0.9),
-        kind: stickyKind,
-        sourceHint: "sticky"
-      };
-    }
-    resetRecognitionMemory();
-    return { label: "…", confidence: 0.3, kind: "unknown" };
-  }
-
-  const top = ranked[0];
-  const kind = kindForLabel(top.label);
-  const stable = applyHysteresis(top.label, top.score, kind);
-
-  // Confidence: blend score + margin over runner-up
-  const second = ranked[1]?.score ?? 0;
-  const margin = top.score - second;
-  let confidence = clamp01(stable.score * 0.75 + margin * 0.9 + 0.15);
-  if (top.ambiguous) confidence *= 0.85;
-  if (stable.pending) confidence *= 0.92;
-
-  // Cap O confidence unless score is excellent (historical over-trigger)
-  if (stable.label === "O" && top.score < 0.7) confidence = Math.min(confidence, 0.7);
-
-  return {
-    label: stable.label,
-    confidence,
-    kind: stable.kind,
-    alt: ranked[1] ? ranked[1].label : null,
-    pending: stable.pending || null,
-    margin
   };
 }
 
