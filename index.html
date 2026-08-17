@@ -3,63 +3,136 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Sign Language Interpreter</title>
-  <meta name="description" content="Privacy-first web app that uses your camera and machine learning to interpret sign language in real time." />
+  <title>ASL Translator</title>
+  <meta name="description" content="Privacy-first ASL letter and word translator. Camera + MediaPipe + on-device ML." />
   <link rel="stylesheet" href="style.css" />
-  <!-- TensorFlow.js -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
-  <!-- KNN Classifier -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.4/dist/knn-classifier.min.js"></script>
 </head>
 <body>
-  <div class="app">
-    <header>
-      <h1>Sign Language Interpreter</h1>
-      <p class="subtitle">Camera + MediaPipe + TensorFlow.js · Runs 100% in your browser</p>
-    </header>
-
-    <main>
-      <div class="video-container">
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="output"></canvas>
-        <div id="status" class="status">Camera off</div>
-      </div>
-
-      <div class="prediction-panel">
-        <div class="prediction-label">Prediction</div>
-        <div id="prediction" class="prediction">—</div>
-        <div id="confidence" class="confidence"></div>
-      </div>
-
-      <div class="controls">
-        <button id="btn-start" class="btn primary">Start Camera</button>
-        <button id="btn-stop" class="btn" disabled>Stop</button>
-        <button id="btn-switch" class="btn" disabled>Switch Camera</button>
-        <button id="btn-speak" class="btn" disabled>Speak</button>
-      </div>
-
-      <div class="train-panel">
-        <h2>Train Custom Signs</h2>
-        <p class="hint">Hold a pose, type a label, then add several samples. The model learns on-device.</p>
-        <div class="train-row">
-          <input id="label-input" type="text" placeholder="Label (e.g. HELLO, A, THUMBS_UP)" maxlength="32" />
-          <button id="btn-add" class="btn primary" disabled>Add Sample</button>
+  <div class="shell">
+    <!-- ── Main stage ─────────────────────────── -->
+    <div class="stage">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">🤟</span>
+          <div>
+            <h1>ASL Translator</h1>
+            <p class="subtitle">Spell letters · form words · all on-device</p>
+          </div>
         </div>
-        <div class="train-row">
-          <button id="btn-clear" class="btn danger" disabled>Clear All Samples</button>
-          <span id="sample-count" class="sample-count">0 samples</span>
+        <div class="topbar-actions">
+          <div class="speed-toggle" role="group" aria-label="Capture speed">
+            <span class="speed-label">Capture</span>
+            <button type="button" id="speed-novice" class="speed-btn active" aria-pressed="true" title="Slower lock — easier for learning">
+              Novice
+            </button>
+            <button type="button" id="speed-expert" class="speed-btn" aria-pressed="false" title="Fast lock — about 0.35s per letter">
+              Expert
+            </button>
+          </div>
+          <button id="btn-start" class="btn primary">Start Camera</button>
+          <button id="btn-stop" class="btn" disabled>Stop</button>
+          <button id="btn-switch" class="btn" disabled title="Switch front/rear">Flip</button>
+        </div>
+      </header>
+
+      <div class="stage-body">
+        <div class="video-wrap">
+          <div class="video-container">
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="output"></canvas>
+            <div id="status" class="status">Camera off</div>
+            <div id="live-badge" class="live-badge" hidden>LIVE</div>
+          </div>
+
+          <div class="guide-chips" aria-label="Quick guide">
+            <span class="chip" id="chip-hold">Hold a letter ~1.0s to lock it</span>
+            <span class="chip">Open hand = space / end word</span>
+            <span class="chip">Drop hand briefly to finish a word</span>
+          </div>
+        </div>
+
+        <section class="readout" aria-label="Translation readout">
+          <div class="live-letter-card">
+            <div class="field-label">Seeing now</div>
+            <div id="prediction" class="live-letter">—</div>
+            <div id="confidence" class="confidence">Start the camera, then hold a clear ASL letter</div>
+            <div class="hold-meter" aria-hidden="true">
+              <div id="hold-fill" class="hold-fill"></div>
+            </div>
+          </div>
+
+          <div class="compose-card">
+            <div class="compose-row">
+              <div class="field-label">Spelling</div>
+              <div id="spelling" class="spelling" aria-live="polite"><span class="placeholder">Letters appear here…</span></div>
+            </div>
+            <div class="compose-row">
+              <div class="field-label">Words / sentence</div>
+              <div id="sentence" class="sentence" aria-live="polite"><span class="placeholder">Completed words appear here…</span></div>
+            </div>
+            <div class="compose-actions">
+              <button id="btn-space" class="btn" disabled title="End current word">Space</button>
+              <button id="btn-backspace" class="btn" disabled title="Remove last letter">⌫ Letter</button>
+              <button id="btn-clear-text" class="btn danger" disabled>Clear text</button>
+              <button id="btn-speak" class="btn primary" disabled>Speak sentence</button>
+            </div>
+          </div>
+        </section>
+
+        <details class="train-panel">
+          <summary>Optional: train custom signs</summary>
+          <p class="hint">Built-in ASL letters work immediately. Train multi-letter labels (e.g. HELLO) to detect whole words as one gesture.</p>
+          <div class="train-row">
+            <input id="label-input" type="text" placeholder="Label (e.g. HELLO, THANKS)" maxlength="32" />
+            <button id="btn-add" class="btn primary" disabled>Add Sample</button>
+          </div>
+          <div class="train-row">
+            <button id="btn-clear" class="btn danger" disabled>Clear samples</button>
+            <span id="sample-count" class="sample-count">0 samples</span>
+          </div>
+        </details>
+      </div>
+
+      <footer class="footer">
+        <a href="https://github.com/ar-fullsend/sign-language-interpreter" target="_blank" rel="noopener">GitHub</a>
+        · Privacy-first · Nothing leaves this device
+      </footer>
+    </div>
+
+    <!-- ── Activity sidebar ───────────────────── -->
+    <aside class="sidebar" aria-label="Activity log">
+      <div class="sidebar-header">
+        <div>
+          <h2>Activity</h2>
+          <p class="sidebar-sub">Letters & words as they’re formed</p>
+        </div>
+        <button id="btn-clear-log" class="btn btn-sm" title="Clear activity log">Clear</button>
+      </div>
+
+      <div class="sidebar-stats">
+        <div class="stat">
+          <span class="stat-value" id="stat-letters">0</span>
+          <span class="stat-label">Letters</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-words">0</span>
+          <span class="stat-label">Words</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-dict">0</span>
+          <span class="stat-label">In dictionary</span>
         </div>
       </div>
 
-      <div class="info">
-        <p>Tips: Good lighting · Hold sign steady for 0.5–1s · Train 8–15 samples per label for best results.</p>
+      <div id="activity-log" class="activity-log" role="log" aria-live="polite" aria-relevant="additions">
+        <div class="log-empty" id="log-empty">
+          No activity yet.<br />
+          Start the camera and fingerspell a word like <strong>HI</strong> or <strong>YES</strong>.
+        </div>
       </div>
-    </main>
-
-    <footer>
-      <a href="https://github.com/ar-fullsend/sign-language-interpreter" target="_blank" rel="noopener">GitHub</a>
-      · Privacy-first · No data leaves your device
-    </footer>
+    </aside>
   </div>
 
   <script type="module" src="app.js"></script>
