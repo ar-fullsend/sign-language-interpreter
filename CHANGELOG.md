@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.8] — 2026-08-17
+
+### Fixed
+- **Seeing now** no longer paints over the camera frame in Chrome
+  - Detection panel is a separate sibling *outside* the video box
+  - Removed `transform` on `<video>` (was causing compositor bleed)
+  - Camera uses padding-box sizing + `contain: paint` so the frame cannot spill
+  - Opaque panel background and clear top margin under the photo
+
 ## [0.2.7] — 2026-08-17
 
 ### Fixed (Chrome mobile stacking)

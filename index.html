@@ -40,44 +40,41 @@
       </header>
 
       <div class="stage-body">
-        <!-- Camera + detection in normal flow (Chrome cannot bury this under <video>) -->
+        <!-- Camera only (nothing detection-related inside — prevents Chrome video paint-over) -->
         <div class="video-wrap">
           <div class="video-container">
-            <div class="video-layer" aria-hidden="true">
-              <video id="webcam" autoplay playsinline muted></video>
-              <canvas id="output"></canvas>
-            </div>
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="output"></canvas>
             <div id="status" class="status">Camera off</div>
             <div id="live-badge" class="live-badge" hidden>LIVE</div>
           </div>
-
-          <!-- Primary “seeing now” panel — immediately under camera, always in the stack -->
-          <section class="detect-panel" id="detect-hud" aria-live="polite" aria-label="Live detection">
-            <div class="detect-panel-top">
-              <span class="detect-panel-kicker" id="hud-kicker">Seeing now</span>
-              <span class="detect-panel-pct" id="hud-pct"></span>
-            </div>
-            <div class="detect-panel-value" id="hud-prediction">—</div>
-            <!-- Keep id="prediction" for desktop card sync / a11y -->
-            <div id="prediction" class="visually-hidden" aria-hidden="true">—</div>
-            <div class="detect-panel-meta" id="hud-confidence">Start camera to detect</div>
-            <div id="confidence" class="visually-hidden" aria-hidden="true"></div>
-            <div class="detect-panel-meter" aria-hidden="true">
-              <div class="detect-panel-fill" id="hud-hold-fill"></div>
-              <div id="hold-fill" class="visually-hidden" aria-hidden="true"></div>
-            </div>
-            <div class="detect-panel-row">
-              <div class="detect-panel-mini">
-                <span class="detect-panel-mini-label">Spelling</span>
-                <span class="detect-panel-mini-text" id="hud-spelling">—</span>
-              </div>
-              <div class="detect-panel-mini">
-                <span class="detect-panel-mini-label">Words</span>
-                <span class="detect-panel-mini-text" id="hud-sentence">—</span>
-              </div>
-            </div>
-          </section>
         </div>
+
+        <!-- Separate block BELOW the camera frame — never overlaid on the photo -->
+        <section class="detect-panel" id="detect-hud" aria-live="polite" aria-label="Live detection">
+          <div class="detect-panel-top">
+            <span class="detect-panel-kicker" id="hud-kicker">Seeing now</span>
+            <span class="detect-panel-pct" id="hud-pct"></span>
+          </div>
+          <div class="detect-panel-value" id="hud-prediction">—</div>
+          <div id="prediction" class="visually-hidden" aria-hidden="true">—</div>
+          <div class="detect-panel-meta" id="hud-confidence">Start camera to detect</div>
+          <div id="confidence" class="visually-hidden" aria-hidden="true"></div>
+          <div class="detect-panel-meter" aria-hidden="true">
+            <div class="detect-panel-fill" id="hud-hold-fill"></div>
+            <div id="hold-fill" class="visually-hidden" aria-hidden="true"></div>
+          </div>
+          <div class="detect-panel-row">
+            <div class="detect-panel-mini">
+              <span class="detect-panel-mini-label">Spelling</span>
+              <span class="detect-panel-mini-text" id="hud-spelling">—</span>
+            </div>
+            <div class="detect-panel-mini">
+              <span class="detect-panel-mini-label">Words</span>
+              <span class="detect-panel-mini-text" id="hud-sentence">—</span>
+            </div>
+          </div>
+        </section>
 
         <!-- Fixed bottom bar on mobile (Chrome-safe; no sticky/overflow bugs) -->
         <div class="mobile-dock" id="mobile-dock" aria-label="Live translation actions">
